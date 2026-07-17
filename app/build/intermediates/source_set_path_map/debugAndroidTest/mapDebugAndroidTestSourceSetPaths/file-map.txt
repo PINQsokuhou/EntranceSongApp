@@ -1,0 +1,4 @@
+com.pingpong.entrancesong.test.app-androidTest-0 C:\dev\EntranceSongApp\app\build\generated\res\resValues\androidTest\debug
+com.pingpong.entrancesong.test.app-mergeDebugAndroidTestResources-1 C:\dev\EntranceSongApp\app\build\intermediates\incremental\debugAndroidTest\mergeDebugAndroidTestResources\merged.dir
+com.pingpong.entrancesong.test.app-mergeDebugAndroidTestResources-2 C:\dev\EntranceSongApp\app\build\intermediates\incremental\debugAndroidTest\mergeDebugAndroidTestResources\stripped.dir
+com.pingpong.entrancesong.test.app-debugAndroidTest-3 C:\dev\EntranceSongApp\app\build\intermediates\merged_res\debugAndroidTest\mergeDebugAndroidTestResources

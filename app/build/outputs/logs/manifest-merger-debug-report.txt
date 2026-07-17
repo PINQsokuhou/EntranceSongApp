@@ -1,0 +1,316 @@
+-- Merging decision tree log ---
+manifest
+ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:2:1-34:12
+INJECTED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:2:1-34:12
+INJECTED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:2:1-34:12
+INJECTED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:2:1-34:12
+MERGED from [androidx.compose.material3:material3-android:1.3.0] C:\Users\hanab\.gradle\caches\transforms-4\9612f506ed67898d996e62433c43e1c7\transformed\material3-release\AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.compose.material:material-icons-extended-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\da31a1a9be0a1a1e30de1629fad7f9da\transformed\material-icons-extended-release\AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.material:material-icons-core-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\daee297b02386e370b7b19b4c6d345a4\transformed\material-icons-core-release\AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.material:material-ripple-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\c0e580442ea153a5b4b0f71988191b09\transformed\material-ripple-release\AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.foundation:foundation-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\3565629d7b1efb59aa3dbe5f3a7e1b96\transformed\foundation-release\AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.animation:animation-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\d7525d0b85b910e7dc6a80d8934ff222\transformed\animation-release\AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.foundation:foundation-layout-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\244273df99b577e72cb238ec799445d4\transformed\foundation-layout-release\AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.animation:animation-core-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\5e647e17b38be40021190a74c0206c87\transformed\animation-core-release\AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.ui:ui-unit-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\fa45e683dadd641709c4545423b9a7b2\transformed\ui-unit-release\AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.ui:ui-graphics-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\0487addc8a33d7f21cb63a1ba84a53fb\transformed\ui-graphics-release\AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.ui:ui-geometry-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\e94fafaf6ef690cff72395b7b53b1752\transformed\ui-geometry-release\AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.ui:ui-util-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\bc87f5f5d357bcfb9c02b048925aee22\transformed\ui-util-release\AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.ui:ui-text-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\790a5555ba6214be57544bd0f746f11f\transformed\ui-text-release\AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.ui:ui-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\6a6ba18db50ebc46b67da73bfaaa2fef\transformed\ui-release\AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.activity:activity:1.9.2] C:\Users\hanab\.gradle\caches\transforms-4\2e38c443a0b3c2b51225c1cc16306c84\transformed\activity-1.9.2\AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.activity:activity-ktx:1.9.2] C:\Users\hanab\.gradle\caches\transforms-4\9bff099eb2e169f6277ccf9747ead1c3\transformed\activity-ktx-1.9.2\AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.activity:activity-compose:1.9.2] C:\Users\hanab\.gradle\caches\transforms-4\919d9f355b8262687d908b9aa771d11e\transformed\activity-compose-1.9.2\AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.media:media:1.7.0] C:\Users\hanab\.gradle\caches\transforms-4\8b5d39949bd5f9da55377c7f8ce9a7da\transformed\media-1.7.0\AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.autofill:autofill:1.0.0] C:\Users\hanab\.gradle\caches\transforms-4\51274d1c9b66d59ba6eb0414af2f02e6\transformed\autofill-1.0.0\AndroidManifest.xml:17:1-24:12
+MERGED from [androidx.emoji2:emoji2:1.3.0] C:\Users\hanab\.gradle\caches\transforms-4\4030fbcd4e6b14d123e7d6ce9c040509\transformed\emoji2-1.3.0\AndroidManifest.xml:17:1-35:12
+MERGED from [androidx.graphics:graphics-path:1.0.1] C:\Users\hanab\.gradle\caches\transforms-4\57b8e0ca6eed046548245e03fa92b4a8\transformed\graphics-path-1.0.1\AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.core:core:1.13.1] C:\Users\hanab\.gradle\caches\transforms-4\07603d5377fba8324b169b8a5aee3496\transformed\core-1.13.1\AndroidManifest.xml:17:1-30:12
+MERGED from [androidx.customview:customview-poolingcontainer:1.0.0] C:\Users\hanab\.gradle\caches\transforms-4\7bafd9f65a813e1130058fa73908e3cd\transformed\customview-poolingcontainer-1.0.0\AndroidManifest.xml:17:1-23:12
+MERGED from [androidx.savedstate:savedstate-ktx:1.2.1] C:\Users\hanab\.gradle\caches\transforms-4\45dc4302638e522833bddee2f3a9f712\transformed\savedstate-ktx-1.2.1\AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.savedstate:savedstate:1.2.1] C:\Users\hanab\.gradle\caches\transforms-4\a38ecf13dbaff0c0c72797a77c44f051\transformed\savedstate-1.2.1\AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.lifecycle:lifecycle-process:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\2eb4aee10fcd4224f1ee09abe099dbd2\transformed\lifecycle-process-2.8.6\AndroidManifest.xml:17:1-35:12
+MERGED from [androidx.lifecycle:lifecycle-livedata-core:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\f3a2e3ebaa3b9a7c34e5d48780899870\transformed\lifecycle-livedata-core-2.8.6\AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.lifecycle:lifecycle-runtime-compose-android:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\9643adaddbd10d304d8c7416db5aa97a\transformed\lifecycle-runtime-compose-release\AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.lifecycle:lifecycle-runtime-android:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\247027ad0373aa76713a7043dc1cda05\transformed\lifecycle-runtime-release\AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.lifecycle:lifecycle-viewmodel-android:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\924ca5008d54f8c4c8b9db87713152d3\transformed\lifecycle-viewmodel-release\AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\f671322c3774c181799c9def44579810\transformed\lifecycle-viewmodel-ktx-2.8.6\AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.lifecycle:lifecycle-runtime-ktx-android:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\726c80c78100f88b1f82a6d0edd9d667\transformed\lifecycle-runtime-ktx-release\AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.lifecycle:lifecycle-viewmodel-savedstate:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\4c48a1dce304f7b60220ecdde6d39bfb\transformed\lifecycle-viewmodel-savedstate-2.8.6\AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.core:core-ktx:1.13.1] C:\Users\hanab\.gradle\caches\transforms-4\3c6f8ae621fb51cb3397fb132d5ac1d8\transformed\core-ktx-1.13.1\AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.runtime:runtime-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\2a29bc3cae6d6521f931303f3ddcc36b\transformed\runtime-release\AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.runtime:runtime-saveable-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\6f429f331fa69fc6749f96a2087f0b94\transformed\runtime-saveable-release\AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] C:\Users\hanab\.gradle\caches\transforms-4\221ba62e6255b5f6e5decd7959c23981\transformed\versionedparcelable-1.1.1\AndroidManifest.xml:17:1-27:12
+MERGED from [androidx.annotation:annotation-experimental:1.4.1] C:\Users\hanab\.gradle\caches\transforms-4\0f8b7ec7f2fbe61875a58a20fce09d93\transformed\annotation-experimental-1.4.1\AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.interpolator:interpolator:1.0.0] C:\Users\hanab\.gradle\caches\transforms-4\244dc79758c1de74f4fd1a4ab76ba7bb\transformed\interpolator-1.0.0\AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\hanab\.gradle\caches\transforms-4\e2b9c87d3d43e92b67a8a66f95005e2c\transformed\profileinstaller-1.3.1\AndroidManifest.xml:17:1-55:12
+MERGED from [androidx.startup:startup-runtime:1.1.1] C:\Users\hanab\.gradle\caches\transforms-4\3b9b4927abc3d1408f14985a38995b7b\transformed\startup-runtime-1.1.1\AndroidManifest.xml:17:1-33:12
+MERGED from [androidx.tracing:tracing:1.0.0] C:\Users\hanab\.gradle\caches\transforms-4\a864c8e823bfe0b9f060cbe9d5804b2c\transformed\tracing-1.0.0\AndroidManifest.xml:17:1-24:12
+MERGED from [androidx.arch.core:core-runtime:2.2.0] C:\Users\hanab\.gradle\caches\transforms-4\a0bdb0ea0280aad71fae81901066a60e\transformed\core-runtime-2.2.0\AndroidManifest.xml:17:1-22:12
+	package
+		INJECTED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml
+	android:versionName
+		INJECTED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml
+	android:versionCode
+		INJECTED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml
+	xmlns:android
+		ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:2:11-69
+uses-permission#android.permission.INTERNET
+ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:4:5-67
+	android:name
+		ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:4:22-64
+uses-permission#android.permission.POST_NOTIFICATIONS
+ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:5:5-77
+	android:name
+		ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:5:22-74
+uses-permission#android.permission.FOREGROUND_SERVICE
+ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:6:5-77
+	android:name
+		ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:6:22-74
+uses-permission#android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK
+ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:7:5-92
+	android:name
+		ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:7:22-89
+application
+ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:9:5-33:19
+INJECTED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:9:5-33:19
+MERGED from [androidx.emoji2:emoji2:1.3.0] C:\Users\hanab\.gradle\caches\transforms-4\4030fbcd4e6b14d123e7d6ce9c040509\transformed\emoji2-1.3.0\AndroidManifest.xml:23:5-33:19
+MERGED from [androidx.emoji2:emoji2:1.3.0] C:\Users\hanab\.gradle\caches\transforms-4\4030fbcd4e6b14d123e7d6ce9c040509\transformed\emoji2-1.3.0\AndroidManifest.xml:23:5-33:19
+MERGED from [androidx.core:core:1.13.1] C:\Users\hanab\.gradle\caches\transforms-4\07603d5377fba8324b169b8a5aee3496\transformed\core-1.13.1\AndroidManifest.xml:28:5-89
+MERGED from [androidx.core:core:1.13.1] C:\Users\hanab\.gradle\caches\transforms-4\07603d5377fba8324b169b8a5aee3496\transformed\core-1.13.1\AndroidManifest.xml:28:5-89
+MERGED from [androidx.lifecycle:lifecycle-process:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\2eb4aee10fcd4224f1ee09abe099dbd2\transformed\lifecycle-process-2.8.6\AndroidManifest.xml:23:5-33:19
+MERGED from [androidx.lifecycle:lifecycle-process:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\2eb4aee10fcd4224f1ee09abe099dbd2\transformed\lifecycle-process-2.8.6\AndroidManifest.xml:23:5-33:19
+MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] C:\Users\hanab\.gradle\caches\transforms-4\221ba62e6255b5f6e5decd7959c23981\transformed\versionedparcelable-1.1.1\AndroidManifest.xml:24:5-25:19
+MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] C:\Users\hanab\.gradle\caches\transforms-4\221ba62e6255b5f6e5decd7959c23981\transformed\versionedparcelable-1.1.1\AndroidManifest.xml:24:5-25:19
+MERGED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\hanab\.gradle\caches\transforms-4\e2b9c87d3d43e92b67a8a66f95005e2c\transformed\profileinstaller-1.3.1\AndroidManifest.xml:23:5-53:19
+MERGED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\hanab\.gradle\caches\transforms-4\e2b9c87d3d43e92b67a8a66f95005e2c\transformed\profileinstaller-1.3.1\AndroidManifest.xml:23:5-53:19
+MERGED from [androidx.startup:startup-runtime:1.1.1] C:\Users\hanab\.gradle\caches\transforms-4\3b9b4927abc3d1408f14985a38995b7b\transformed\startup-runtime-1.1.1\AndroidManifest.xml:25:5-31:19
+MERGED from [androidx.startup:startup-runtime:1.1.1] C:\Users\hanab\.gradle\caches\transforms-4\3b9b4927abc3d1408f14985a38995b7b\transformed\startup-runtime-1.1.1\AndroidManifest.xml:25:5-31:19
+	android:extractNativeLibs
+		INJECTED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml
+	android:appComponentFactory
+		ADDED from [androidx.core:core:1.13.1] C:\Users\hanab\.gradle\caches\transforms-4\07603d5377fba8324b169b8a5aee3496\transformed\core-1.13.1\AndroidManifest.xml:28:18-86
+	android:supportsRtl
+		ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:12:9-36
+	android:label
+		ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:11:9-35
+	android:theme
+		ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:13:9-72
+	android:name
+		ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:10:9-36
+activity#com.pingpong.entrancesong.MainActivity
+ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:15:9-23:20
+	android:launchMode
+		ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:18:13-44
+	android:exported
+		ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:17:13-36
+	android:name
+		ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:16:13-41
+intent-filter#action:name:android.intent.action.MAIN+category:name:android.intent.category.LAUNCHER
+ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:19:13-22:29
+action#android.intent.action.MAIN
+ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:20:17-69
+	android:name
+		ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:20:25-66
+category#android.intent.category.LAUNCHER
+ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:21:17-77
+	android:name
+		ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:21:27-74
+service#com.pingpong.entrancesong.media.PlaybackService
+ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:25:9-32:19
+	android:exported
+		ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:27:13-36
+	android:foregroundServiceType
+		ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:28:13-58
+	android:name
+		ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:26:13-50
+intent-filter#action:name:android.intent.action.MEDIA_BUTTON
+ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:29:13-31:29
+action#android.intent.action.MEDIA_BUTTON
+ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:30:17-77
+	android:name
+		ADDED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml:30:25-74
+uses-sdk
+INJECTED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml reason: use-sdk injection requested
+INJECTED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml
+INJECTED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml
+MERGED from [androidx.compose.material3:material3-android:1.3.0] C:\Users\hanab\.gradle\caches\transforms-4\9612f506ed67898d996e62433c43e1c7\transformed\material3-release\AndroidManifest.xml:20:5-44
+MERGED from [androidx.compose.material3:material3-android:1.3.0] C:\Users\hanab\.gradle\caches\transforms-4\9612f506ed67898d996e62433c43e1c7\transformed\material3-release\AndroidManifest.xml:20:5-44
+MERGED from [androidx.compose.material:material-icons-extended-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\da31a1a9be0a1a1e30de1629fad7f9da\transformed\material-icons-extended-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.material:material-icons-extended-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\da31a1a9be0a1a1e30de1629fad7f9da\transformed\material-icons-extended-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.material:material-icons-core-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\daee297b02386e370b7b19b4c6d345a4\transformed\material-icons-core-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.material:material-icons-core-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\daee297b02386e370b7b19b4c6d345a4\transformed\material-icons-core-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.material:material-ripple-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\c0e580442ea153a5b4b0f71988191b09\transformed\material-ripple-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.material:material-ripple-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\c0e580442ea153a5b4b0f71988191b09\transformed\material-ripple-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.foundation:foundation-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\3565629d7b1efb59aa3dbe5f3a7e1b96\transformed\foundation-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.foundation:foundation-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\3565629d7b1efb59aa3dbe5f3a7e1b96\transformed\foundation-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.animation:animation-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\d7525d0b85b910e7dc6a80d8934ff222\transformed\animation-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.animation:animation-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\d7525d0b85b910e7dc6a80d8934ff222\transformed\animation-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.foundation:foundation-layout-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\244273df99b577e72cb238ec799445d4\transformed\foundation-layout-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.foundation:foundation-layout-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\244273df99b577e72cb238ec799445d4\transformed\foundation-layout-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.animation:animation-core-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\5e647e17b38be40021190a74c0206c87\transformed\animation-core-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.animation:animation-core-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\5e647e17b38be40021190a74c0206c87\transformed\animation-core-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.ui:ui-unit-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\fa45e683dadd641709c4545423b9a7b2\transformed\ui-unit-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.ui:ui-unit-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\fa45e683dadd641709c4545423b9a7b2\transformed\ui-unit-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.ui:ui-graphics-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\0487addc8a33d7f21cb63a1ba84a53fb\transformed\ui-graphics-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.ui:ui-graphics-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\0487addc8a33d7f21cb63a1ba84a53fb\transformed\ui-graphics-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.ui:ui-geometry-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\e94fafaf6ef690cff72395b7b53b1752\transformed\ui-geometry-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.ui:ui-geometry-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\e94fafaf6ef690cff72395b7b53b1752\transformed\ui-geometry-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.ui:ui-util-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\bc87f5f5d357bcfb9c02b048925aee22\transformed\ui-util-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.ui:ui-util-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\bc87f5f5d357bcfb9c02b048925aee22\transformed\ui-util-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.ui:ui-text-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\790a5555ba6214be57544bd0f746f11f\transformed\ui-text-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.ui:ui-text-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\790a5555ba6214be57544bd0f746f11f\transformed\ui-text-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.ui:ui-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\6a6ba18db50ebc46b67da73bfaaa2fef\transformed\ui-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.ui:ui-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\6a6ba18db50ebc46b67da73bfaaa2fef\transformed\ui-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.activity:activity:1.9.2] C:\Users\hanab\.gradle\caches\transforms-4\2e38c443a0b3c2b51225c1cc16306c84\transformed\activity-1.9.2\AndroidManifest.xml:20:5-44
+MERGED from [androidx.activity:activity:1.9.2] C:\Users\hanab\.gradle\caches\transforms-4\2e38c443a0b3c2b51225c1cc16306c84\transformed\activity-1.9.2\AndroidManifest.xml:20:5-44
+MERGED from [androidx.activity:activity-ktx:1.9.2] C:\Users\hanab\.gradle\caches\transforms-4\9bff099eb2e169f6277ccf9747ead1c3\transformed\activity-ktx-1.9.2\AndroidManifest.xml:5:5-44
+MERGED from [androidx.activity:activity-ktx:1.9.2] C:\Users\hanab\.gradle\caches\transforms-4\9bff099eb2e169f6277ccf9747ead1c3\transformed\activity-ktx-1.9.2\AndroidManifest.xml:5:5-44
+MERGED from [androidx.activity:activity-compose:1.9.2] C:\Users\hanab\.gradle\caches\transforms-4\919d9f355b8262687d908b9aa771d11e\transformed\activity-compose-1.9.2\AndroidManifest.xml:5:5-44
+MERGED from [androidx.activity:activity-compose:1.9.2] C:\Users\hanab\.gradle\caches\transforms-4\919d9f355b8262687d908b9aa771d11e\transformed\activity-compose-1.9.2\AndroidManifest.xml:5:5-44
+MERGED from [androidx.media:media:1.7.0] C:\Users\hanab\.gradle\caches\transforms-4\8b5d39949bd5f9da55377c7f8ce9a7da\transformed\media-1.7.0\AndroidManifest.xml:5:5-44
+MERGED from [androidx.media:media:1.7.0] C:\Users\hanab\.gradle\caches\transforms-4\8b5d39949bd5f9da55377c7f8ce9a7da\transformed\media-1.7.0\AndroidManifest.xml:5:5-44
+MERGED from [androidx.autofill:autofill:1.0.0] C:\Users\hanab\.gradle\caches\transforms-4\51274d1c9b66d59ba6eb0414af2f02e6\transformed\autofill-1.0.0\AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.autofill:autofill:1.0.0] C:\Users\hanab\.gradle\caches\transforms-4\51274d1c9b66d59ba6eb0414af2f02e6\transformed\autofill-1.0.0\AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.emoji2:emoji2:1.3.0] C:\Users\hanab\.gradle\caches\transforms-4\4030fbcd4e6b14d123e7d6ce9c040509\transformed\emoji2-1.3.0\AndroidManifest.xml:21:5-44
+MERGED from [androidx.emoji2:emoji2:1.3.0] C:\Users\hanab\.gradle\caches\transforms-4\4030fbcd4e6b14d123e7d6ce9c040509\transformed\emoji2-1.3.0\AndroidManifest.xml:21:5-44
+MERGED from [androidx.graphics:graphics-path:1.0.1] C:\Users\hanab\.gradle\caches\transforms-4\57b8e0ca6eed046548245e03fa92b4a8\transformed\graphics-path-1.0.1\AndroidManifest.xml:5:5-44
+MERGED from [androidx.graphics:graphics-path:1.0.1] C:\Users\hanab\.gradle\caches\transforms-4\57b8e0ca6eed046548245e03fa92b4a8\transformed\graphics-path-1.0.1\AndroidManifest.xml:5:5-44
+MERGED from [androidx.core:core:1.13.1] C:\Users\hanab\.gradle\caches\transforms-4\07603d5377fba8324b169b8a5aee3496\transformed\core-1.13.1\AndroidManifest.xml:20:5-44
+MERGED from [androidx.core:core:1.13.1] C:\Users\hanab\.gradle\caches\transforms-4\07603d5377fba8324b169b8a5aee3496\transformed\core-1.13.1\AndroidManifest.xml:20:5-44
+MERGED from [androidx.customview:customview-poolingcontainer:1.0.0] C:\Users\hanab\.gradle\caches\transforms-4\7bafd9f65a813e1130058fa73908e3cd\transformed\customview-poolingcontainer-1.0.0\AndroidManifest.xml:20:5-21:38
+MERGED from [androidx.customview:customview-poolingcontainer:1.0.0] C:\Users\hanab\.gradle\caches\transforms-4\7bafd9f65a813e1130058fa73908e3cd\transformed\customview-poolingcontainer-1.0.0\AndroidManifest.xml:20:5-21:38
+MERGED from [androidx.savedstate:savedstate-ktx:1.2.1] C:\Users\hanab\.gradle\caches\transforms-4\45dc4302638e522833bddee2f3a9f712\transformed\savedstate-ktx-1.2.1\AndroidManifest.xml:20:5-44
+MERGED from [androidx.savedstate:savedstate-ktx:1.2.1] C:\Users\hanab\.gradle\caches\transforms-4\45dc4302638e522833bddee2f3a9f712\transformed\savedstate-ktx-1.2.1\AndroidManifest.xml:20:5-44
+MERGED from [androidx.savedstate:savedstate:1.2.1] C:\Users\hanab\.gradle\caches\transforms-4\a38ecf13dbaff0c0c72797a77c44f051\transformed\savedstate-1.2.1\AndroidManifest.xml:20:5-44
+MERGED from [androidx.savedstate:savedstate:1.2.1] C:\Users\hanab\.gradle\caches\transforms-4\a38ecf13dbaff0c0c72797a77c44f051\transformed\savedstate-1.2.1\AndroidManifest.xml:20:5-44
+MERGED from [androidx.lifecycle:lifecycle-process:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\2eb4aee10fcd4224f1ee09abe099dbd2\transformed\lifecycle-process-2.8.6\AndroidManifest.xml:21:5-44
+MERGED from [androidx.lifecycle:lifecycle-process:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\2eb4aee10fcd4224f1ee09abe099dbd2\transformed\lifecycle-process-2.8.6\AndroidManifest.xml:21:5-44
+MERGED from [androidx.lifecycle:lifecycle-livedata-core:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\f3a2e3ebaa3b9a7c34e5d48780899870\transformed\lifecycle-livedata-core-2.8.6\AndroidManifest.xml:20:5-44
+MERGED from [androidx.lifecycle:lifecycle-livedata-core:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\f3a2e3ebaa3b9a7c34e5d48780899870\transformed\lifecycle-livedata-core-2.8.6\AndroidManifest.xml:20:5-44
+MERGED from [androidx.lifecycle:lifecycle-runtime-compose-android:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\9643adaddbd10d304d8c7416db5aa97a\transformed\lifecycle-runtime-compose-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.lifecycle:lifecycle-runtime-compose-android:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\9643adaddbd10d304d8c7416db5aa97a\transformed\lifecycle-runtime-compose-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.lifecycle:lifecycle-runtime-android:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\247027ad0373aa76713a7043dc1cda05\transformed\lifecycle-runtime-release\AndroidManifest.xml:20:5-44
+MERGED from [androidx.lifecycle:lifecycle-runtime-android:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\247027ad0373aa76713a7043dc1cda05\transformed\lifecycle-runtime-release\AndroidManifest.xml:20:5-44
+MERGED from [androidx.lifecycle:lifecycle-viewmodel-android:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\924ca5008d54f8c4c8b9db87713152d3\transformed\lifecycle-viewmodel-release\AndroidManifest.xml:20:5-44
+MERGED from [androidx.lifecycle:lifecycle-viewmodel-android:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\924ca5008d54f8c4c8b9db87713152d3\transformed\lifecycle-viewmodel-release\AndroidManifest.xml:20:5-44
+MERGED from [androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\f671322c3774c181799c9def44579810\transformed\lifecycle-viewmodel-ktx-2.8.6\AndroidManifest.xml:5:5-44
+MERGED from [androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\f671322c3774c181799c9def44579810\transformed\lifecycle-viewmodel-ktx-2.8.6\AndroidManifest.xml:5:5-44
+MERGED from [androidx.lifecycle:lifecycle-runtime-ktx-android:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\726c80c78100f88b1f82a6d0edd9d667\transformed\lifecycle-runtime-ktx-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.lifecycle:lifecycle-runtime-ktx-android:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\726c80c78100f88b1f82a6d0edd9d667\transformed\lifecycle-runtime-ktx-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.lifecycle:lifecycle-viewmodel-savedstate:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\4c48a1dce304f7b60220ecdde6d39bfb\transformed\lifecycle-viewmodel-savedstate-2.8.6\AndroidManifest.xml:20:5-44
+MERGED from [androidx.lifecycle:lifecycle-viewmodel-savedstate:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\4c48a1dce304f7b60220ecdde6d39bfb\transformed\lifecycle-viewmodel-savedstate-2.8.6\AndroidManifest.xml:20:5-44
+MERGED from [androidx.core:core-ktx:1.13.1] C:\Users\hanab\.gradle\caches\transforms-4\3c6f8ae621fb51cb3397fb132d5ac1d8\transformed\core-ktx-1.13.1\AndroidManifest.xml:5:5-44
+MERGED from [androidx.core:core-ktx:1.13.1] C:\Users\hanab\.gradle\caches\transforms-4\3c6f8ae621fb51cb3397fb132d5ac1d8\transformed\core-ktx-1.13.1\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.runtime:runtime-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\2a29bc3cae6d6521f931303f3ddcc36b\transformed\runtime-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.runtime:runtime-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\2a29bc3cae6d6521f931303f3ddcc36b\transformed\runtime-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.runtime:runtime-saveable-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\6f429f331fa69fc6749f96a2087f0b94\transformed\runtime-saveable-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.runtime:runtime-saveable-android:1.7.3] C:\Users\hanab\.gradle\caches\transforms-4\6f429f331fa69fc6749f96a2087f0b94\transformed\runtime-saveable-release\AndroidManifest.xml:5:5-44
+MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] C:\Users\hanab\.gradle\caches\transforms-4\221ba62e6255b5f6e5decd7959c23981\transformed\versionedparcelable-1.1.1\AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] C:\Users\hanab\.gradle\caches\transforms-4\221ba62e6255b5f6e5decd7959c23981\transformed\versionedparcelable-1.1.1\AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.annotation:annotation-experimental:1.4.1] C:\Users\hanab\.gradle\caches\transforms-4\0f8b7ec7f2fbe61875a58a20fce09d93\transformed\annotation-experimental-1.4.1\AndroidManifest.xml:5:5-44
+MERGED from [androidx.annotation:annotation-experimental:1.4.1] C:\Users\hanab\.gradle\caches\transforms-4\0f8b7ec7f2fbe61875a58a20fce09d93\transformed\annotation-experimental-1.4.1\AndroidManifest.xml:5:5-44
+MERGED from [androidx.interpolator:interpolator:1.0.0] C:\Users\hanab\.gradle\caches\transforms-4\244dc79758c1de74f4fd1a4ab76ba7bb\transformed\interpolator-1.0.0\AndroidManifest.xml:20:5-44
+MERGED from [androidx.interpolator:interpolator:1.0.0] C:\Users\hanab\.gradle\caches\transforms-4\244dc79758c1de74f4fd1a4ab76ba7bb\transformed\interpolator-1.0.0\AndroidManifest.xml:20:5-44
+MERGED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\hanab\.gradle\caches\transforms-4\e2b9c87d3d43e92b67a8a66f95005e2c\transformed\profileinstaller-1.3.1\AndroidManifest.xml:21:5-44
+MERGED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\hanab\.gradle\caches\transforms-4\e2b9c87d3d43e92b67a8a66f95005e2c\transformed\profileinstaller-1.3.1\AndroidManifest.xml:21:5-44
+MERGED from [androidx.startup:startup-runtime:1.1.1] C:\Users\hanab\.gradle\caches\transforms-4\3b9b4927abc3d1408f14985a38995b7b\transformed\startup-runtime-1.1.1\AndroidManifest.xml:21:5-23:41
+MERGED from [androidx.startup:startup-runtime:1.1.1] C:\Users\hanab\.gradle\caches\transforms-4\3b9b4927abc3d1408f14985a38995b7b\transformed\startup-runtime-1.1.1\AndroidManifest.xml:21:5-23:41
+MERGED from [androidx.tracing:tracing:1.0.0] C:\Users\hanab\.gradle\caches\transforms-4\a864c8e823bfe0b9f060cbe9d5804b2c\transformed\tracing-1.0.0\AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.tracing:tracing:1.0.0] C:\Users\hanab\.gradle\caches\transforms-4\a864c8e823bfe0b9f060cbe9d5804b2c\transformed\tracing-1.0.0\AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.arch.core:core-runtime:2.2.0] C:\Users\hanab\.gradle\caches\transforms-4\a0bdb0ea0280aad71fae81901066a60e\transformed\core-runtime-2.2.0\AndroidManifest.xml:20:5-44
+MERGED from [androidx.arch.core:core-runtime:2.2.0] C:\Users\hanab\.gradle\caches\transforms-4\a0bdb0ea0280aad71fae81901066a60e\transformed\core-runtime-2.2.0\AndroidManifest.xml:20:5-44
+	android:targetSdkVersion
+		INJECTED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml
+	android:minSdkVersion
+		INJECTED from C:\dev\EntranceSongApp\app\src\main\AndroidManifest.xml
+provider#androidx.startup.InitializationProvider
+ADDED from [androidx.emoji2:emoji2:1.3.0] C:\Users\hanab\.gradle\caches\transforms-4\4030fbcd4e6b14d123e7d6ce9c040509\transformed\emoji2-1.3.0\AndroidManifest.xml:24:9-32:20
+MERGED from [androidx.lifecycle:lifecycle-process:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\2eb4aee10fcd4224f1ee09abe099dbd2\transformed\lifecycle-process-2.8.6\AndroidManifest.xml:24:9-32:20
+MERGED from [androidx.lifecycle:lifecycle-process:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\2eb4aee10fcd4224f1ee09abe099dbd2\transformed\lifecycle-process-2.8.6\AndroidManifest.xml:24:9-32:20
+MERGED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\hanab\.gradle\caches\transforms-4\e2b9c87d3d43e92b67a8a66f95005e2c\transformed\profileinstaller-1.3.1\AndroidManifest.xml:24:9-32:20
+MERGED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\hanab\.gradle\caches\transforms-4\e2b9c87d3d43e92b67a8a66f95005e2c\transformed\profileinstaller-1.3.1\AndroidManifest.xml:24:9-32:20
+MERGED from [androidx.startup:startup-runtime:1.1.1] C:\Users\hanab\.gradle\caches\transforms-4\3b9b4927abc3d1408f14985a38995b7b\transformed\startup-runtime-1.1.1\AndroidManifest.xml:26:9-30:34
+MERGED from [androidx.startup:startup-runtime:1.1.1] C:\Users\hanab\.gradle\caches\transforms-4\3b9b4927abc3d1408f14985a38995b7b\transformed\startup-runtime-1.1.1\AndroidManifest.xml:26:9-30:34
+	tools:node
+		ADDED from [androidx.emoji2:emoji2:1.3.0] C:\Users\hanab\.gradle\caches\transforms-4\4030fbcd4e6b14d123e7d6ce9c040509\transformed\emoji2-1.3.0\AndroidManifest.xml:28:13-31
+	android:authorities
+		ADDED from [androidx.emoji2:emoji2:1.3.0] C:\Users\hanab\.gradle\caches\transforms-4\4030fbcd4e6b14d123e7d6ce9c040509\transformed\emoji2-1.3.0\AndroidManifest.xml:26:13-68
+	android:exported
+		ADDED from [androidx.emoji2:emoji2:1.3.0] C:\Users\hanab\.gradle\caches\transforms-4\4030fbcd4e6b14d123e7d6ce9c040509\transformed\emoji2-1.3.0\AndroidManifest.xml:27:13-37
+	android:name
+		ADDED from [androidx.emoji2:emoji2:1.3.0] C:\Users\hanab\.gradle\caches\transforms-4\4030fbcd4e6b14d123e7d6ce9c040509\transformed\emoji2-1.3.0\AndroidManifest.xml:25:13-67
+meta-data#androidx.emoji2.text.EmojiCompatInitializer
+ADDED from [androidx.emoji2:emoji2:1.3.0] C:\Users\hanab\.gradle\caches\transforms-4\4030fbcd4e6b14d123e7d6ce9c040509\transformed\emoji2-1.3.0\AndroidManifest.xml:29:13-31:52
+	android:value
+		ADDED from [androidx.emoji2:emoji2:1.3.0] C:\Users\hanab\.gradle\caches\transforms-4\4030fbcd4e6b14d123e7d6ce9c040509\transformed\emoji2-1.3.0\AndroidManifest.xml:31:17-49
+	android:name
+		ADDED from [androidx.emoji2:emoji2:1.3.0] C:\Users\hanab\.gradle\caches\transforms-4\4030fbcd4e6b14d123e7d6ce9c040509\transformed\emoji2-1.3.0\AndroidManifest.xml:30:17-75
+permission#${applicationId}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+ADDED from [androidx.core:core:1.13.1] C:\Users\hanab\.gradle\caches\transforms-4\07603d5377fba8324b169b8a5aee3496\transformed\core-1.13.1\AndroidManifest.xml:22:5-24:47
+	android:protectionLevel
+		ADDED from [androidx.core:core:1.13.1] C:\Users\hanab\.gradle\caches\transforms-4\07603d5377fba8324b169b8a5aee3496\transformed\core-1.13.1\AndroidManifest.xml:24:9-44
+	android:name
+		ADDED from [androidx.core:core:1.13.1] C:\Users\hanab\.gradle\caches\transforms-4\07603d5377fba8324b169b8a5aee3496\transformed\core-1.13.1\AndroidManifest.xml:23:9-81
+permission#com.pingpong.entrancesong.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+ADDED from [androidx.core:core:1.13.1] C:\Users\hanab\.gradle\caches\transforms-4\07603d5377fba8324b169b8a5aee3496\transformed\core-1.13.1\AndroidManifest.xml:22:5-24:47
+	android:protectionLevel
+		ADDED from [androidx.core:core:1.13.1] C:\Users\hanab\.gradle\caches\transforms-4\07603d5377fba8324b169b8a5aee3496\transformed\core-1.13.1\AndroidManifest.xml:24:9-44
+	android:name
+		ADDED from [androidx.core:core:1.13.1] C:\Users\hanab\.gradle\caches\transforms-4\07603d5377fba8324b169b8a5aee3496\transformed\core-1.13.1\AndroidManifest.xml:23:9-81
+uses-permission#${applicationId}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+ADDED from [androidx.core:core:1.13.1] C:\Users\hanab\.gradle\caches\transforms-4\07603d5377fba8324b169b8a5aee3496\transformed\core-1.13.1\AndroidManifest.xml:26:5-97
+	android:name
+		ADDED from [androidx.core:core:1.13.1] C:\Users\hanab\.gradle\caches\transforms-4\07603d5377fba8324b169b8a5aee3496\transformed\core-1.13.1\AndroidManifest.xml:26:22-94
+uses-permission#com.pingpong.entrancesong.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+ADDED from [androidx.core:core:1.13.1] C:\Users\hanab\.gradle\caches\transforms-4\07603d5377fba8324b169b8a5aee3496\transformed\core-1.13.1\AndroidManifest.xml:26:5-97
+	android:name
+		ADDED from [androidx.core:core:1.13.1] C:\Users\hanab\.gradle\caches\transforms-4\07603d5377fba8324b169b8a5aee3496\transformed\core-1.13.1\AndroidManifest.xml:26:22-94
+meta-data#androidx.lifecycle.ProcessLifecycleInitializer
+ADDED from [androidx.lifecycle:lifecycle-process:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\2eb4aee10fcd4224f1ee09abe099dbd2\transformed\lifecycle-process-2.8.6\AndroidManifest.xml:29:13-31:52
+	android:value
+		ADDED from [androidx.lifecycle:lifecycle-process:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\2eb4aee10fcd4224f1ee09abe099dbd2\transformed\lifecycle-process-2.8.6\AndroidManifest.xml:31:17-49
+	android:name
+		ADDED from [androidx.lifecycle:lifecycle-process:2.8.6] C:\Users\hanab\.gradle\caches\transforms-4\2eb4aee10fcd4224f1ee09abe099dbd2\transformed\lifecycle-process-2.8.6\AndroidManifest.xml:30:17-78
+meta-data#androidx.profileinstaller.ProfileInstallerInitializer
+ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\hanab\.gradle\caches\transforms-4\e2b9c87d3d43e92b67a8a66f95005e2c\transformed\profileinstaller-1.3.1\AndroidManifest.xml:29:13-31:52
+	android:value
+		ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\hanab\.gradle\caches\transforms-4\e2b9c87d3d43e92b67a8a66f95005e2c\transformed\profileinstaller-1.3.1\AndroidManifest.xml:31:17-49
+	android:name
+		ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\hanab\.gradle\caches\transforms-4\e2b9c87d3d43e92b67a8a66f95005e2c\transformed\profileinstaller-1.3.1\AndroidManifest.xml:30:17-85
+receiver#androidx.profileinstaller.ProfileInstallReceiver
+ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\hanab\.gradle\caches\transforms-4\e2b9c87d3d43e92b67a8a66f95005e2c\transformed\profileinstaller-1.3.1\AndroidManifest.xml:34:9-52:20
+	android:enabled
+		ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\hanab\.gradle\caches\transforms-4\e2b9c87d3d43e92b67a8a66f95005e2c\transformed\profileinstaller-1.3.1\AndroidManifest.xml:37:13-35
+	android:exported
+		ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\hanab\.gradle\caches\transforms-4\e2b9c87d3d43e92b67a8a66f95005e2c\transformed\profileinstaller-1.3.1\AndroidManifest.xml:38:13-36
+	android:permission
+		ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\hanab\.gradle\caches\transforms-4\e2b9c87d3d43e92b67a8a66f95005e2c\transformed\profileinstaller-1.3.1\AndroidManifest.xml:39:13-57
+	android:directBootAware
+		ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\hanab\.gradle\caches\transforms-4\e2b9c87d3d43e92b67a8a66f95005e2c\transformed\profileinstaller-1.3.1\AndroidManifest.xml:36:13-44
+	android:name
+		ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\hanab\.gradle\caches\transforms-4\e2b9c87d3d43e92b67a8a66f95005e2c\transformed\profileinstaller-1.3.1\AndroidManifest.xml:35:13-76
+intent-filter#action:name:androidx.profileinstaller.action.INSTALL_PROFILE
+ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\hanab\.gradle\caches\transforms-4\e2b9c87d3d43e92b67a8a66f95005e2c\transformed\profileinstaller-1.3.1\AndroidManifest.xml:40:13-42:29
+action#androidx.profileinstaller.action.INSTALL_PROFILE
+ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\hanab\.gradle\caches\transforms-4\e2b9c87d3d43e92b67a8a66f95005e2c\transformed\profileinstaller-1.3.1\AndroidManifest.xml:41:17-91
+	android:name
+		ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\hanab\.gradle\caches\transforms-4\e2b9c87d3d43e92b67a8a66f95005e2c\transformed\profileinstaller-1.3.1\AndroidManifest.xml:41:25-88
+intent-filter#action:name:androidx.profileinstaller.action.SKIP_FILE
+ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\hanab\.gradle\caches\transforms-4\e2b9c87d3d43e92b67a8a66f95005e2c\transformed\profileinstaller-1.3.1\AndroidManifest.xml:43:13-45:29
+action#androidx.profileinstaller.action.SKIP_FILE
+ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\hanab\.gradle\caches\transforms-4\e2b9c87d3d43e92b67a8a66f95005e2c\transformed\profileinstaller-1.3.1\AndroidManifest.xml:44:17-85
+	android:name
+		ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\hanab\.gradle\caches\transforms-4\e2b9c87d3d43e92b67a8a66f95005e2c\transformed\profileinstaller-1.3.1\AndroidManifest.xml:44:25-82
+intent-filter#action:name:androidx.profileinstaller.action.SAVE_PROFILE
+ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\hanab\.gradle\caches\transforms-4\e2b9c87d3d43e92b67a8a66f95005e2c\transformed\profileinstaller-1.3.1\AndroidManifest.xml:46:13-48:29
+action#androidx.profileinstaller.action.SAVE_PROFILE
+ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\hanab\.gradle\caches\transforms-4\e2b9c87d3d43e92b67a8a66f95005e2c\transformed\profileinstaller-1.3.1\AndroidManifest.xml:47:17-88
+	android:name
+		ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\hanab\.gradle\caches\transforms-4\e2b9c87d3d43e92b67a8a66f95005e2c\transformed\profileinstaller-1.3.1\AndroidManifest.xml:47:25-85
+intent-filter#action:name:androidx.profileinstaller.action.BENCHMARK_OPERATION
+ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\hanab\.gradle\caches\transforms-4\e2b9c87d3d43e92b67a8a66f95005e2c\transformed\profileinstaller-1.3.1\AndroidManifest.xml:49:13-51:29
+action#androidx.profileinstaller.action.BENCHMARK_OPERATION
+ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\hanab\.gradle\caches\transforms-4\e2b9c87d3d43e92b67a8a66f95005e2c\transformed\profileinstaller-1.3.1\AndroidManifest.xml:50:17-95
+	android:name
+		ADDED from [androidx.profileinstaller:profileinstaller:1.3.1] C:\Users\hanab\.gradle\caches\transforms-4\e2b9c87d3d43e92b67a8a66f95005e2c\transformed\profileinstaller-1.3.1\AndroidManifest.xml:50:25-92
