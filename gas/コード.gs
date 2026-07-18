@@ -558,7 +558,9 @@ function renderMusic() {
         var parts = t.split("/");
         var artist = parts.length > 1 ? parts[0].trim() : "";
         var title = parts.length > 1 ? parts.slice(1).join("/").trim() : t;
-        body += '<div class="mt"><span class="tt">' + esc(title) + '</span>' +
+        // 複数曲登録時は選曲ルール（N曲中i曲目 → Nn+i打席で使用）をバッジで表示
+        var cyc = m.bat.length > 1 ? '<span class="sl">' + m.bat.length + 'n+' + (i + 1) + '打席</span> ' : '';
+        body += '<div class="mt">' + cyc + '<span class="tt">' + esc(title) + '</span>' +
           (artist ? '<span class="ar">' + esc(artist) + '</span>' : '') + '</div>';
         var sp = m.batSpotify[i] || "";
         var tid = spotifyTrackId(sp);
