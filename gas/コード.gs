@@ -54,6 +54,11 @@ function doGet(e) {
   if (p.action === "roster") return json(getRoster());
   if (p.action === "song") return json(getSong(p.id));
 
+  // スコアブック記録ページ（ブラウザ版・試合前セットアップ〜1球速報〜試合終了保存）
+  // renderRecord() は完全なHTMLを自前で組み立てて返すため、page()やraw=1のURL置換は経由しない
+  // （ページ内のfetch送信先として絶対URLが必要なため）
+  if (p.view === "record") return htmlOut(renderRecord());
+
   const cache = CacheService.getScriptCache();
   let h;
   // 試合ページ（ライブは毎回最新、終了試合はキャッシュ）
@@ -104,6 +109,16 @@ function doPost(e) {
   } catch (err) {
     return json({ ok: false, error: String(err) });
   }
+}
+
+// google.script.run から呼べるディスパッチ関数（record ページ用）
+function recordAction(d) {
+  if (d.action === "liveStart") return liveStart(d);
+  if (d.action === "livePA") return livePA(d);
+  if (d.action === "liveUndo") return liveUndo();
+  if (d.action === "liveEnd") return liveEnd();
+  if (d.action === "liveState") return liveSetState(d);
+  return saveGame(d);
 }
 
 function json(o) {
