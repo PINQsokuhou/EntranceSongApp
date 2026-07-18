@@ -94,20 +94,18 @@ border-top:1px solid #24252b}
 /* カウントボタン */
 .countbtns{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:14px 0}
 .countbtns .btn{height:56px;font-size:1.02em}
-.btn.ball{background:#2f6fdd}
-.btn.strike{background:#f5c518;color:#1a1a1a}
-.btn.foul{background:#c7b37a;color:#1a1a1a}
+.btn.ball{background:#1565C0}
+.btn.strike{background:#F9A825;color:#212121}
+.btn.foul{background:#D7C9A0;color:#5D4037}
 /* 結果ボタン */
-.resultbtns{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:6px 0}
+.resultbtns{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin:6px 0}
+.resultbtns2{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:6px 0}
 .resultbtns .btn{height:54px;font-size:.98em}
-.btn.res-hit{background:#18b56a}
-.btn.res-out{background:#e5484d}
-.btn.res-error{background:#b8862f}
-.btn.res-sac{background:#2f6fdd}
-.btn.res-hbp{background:#9b59b6}
-.btn.res-interfere{background:#757575}
-.btn.res-squeeze{background:#f5a623;color:#1a1a1a}
-.btn.res-nhne{background:transparent;border:1px dashed #55575f;color:#cfd2da;font-size:.82em!important}
+/* アプリ(MainScreen.kt)と同じ配色: ヒット=緑 アウト=赤 その他=アウトライン スクイズ=橙 */
+.btn.res-hit{background:#2E7D32}
+.btn.res-out{background:#C62828}
+.btn.res-outline{background:transparent;border:1px solid #4a4d57;color:#cfd2da}
+.btn.res-squeeze{background:#E65100}
 .subbtnrow{display:flex;gap:8px;margin:4px 0 14px}
 /* モーダル */
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;
@@ -1116,7 +1114,7 @@ function renderExtraModal(){
     extra.innerHTML = '<div class="overlay center"><div class="sheet">' +
       '<h3>3ストライク</h3><div class="meta">空振りか見逃しかを選択してください</div>' +
       '<button class="btn red block" style="height:56px;margin-bottom:10px" onclick="RB.confirmStrikeoutChoice(true)">空　振　り</button>' +
-      '<button class="btn" style="height:56px;background:#1565C0" onclick="RB.confirmStrikeoutChoice(false)">見　逃　し</button>' +
+      '<button class="btn block" style="height:56px;background:#1565C0" onclick="RB.confirmStrikeoutChoice(false)">見　逃　し</button>' +
       '<div class="footbtns"><button class="btn outline block" onclick="RB.undoThirdStrike()">入力ミス（戻す）</button></div>' +
       '</div></div>';
   } else {
@@ -1257,25 +1255,24 @@ function renderGame(){
     '<button class="btn foul" ' + (disabled ? 'disabled' : '') + ' onclick="RB.addFoul()">ファール</button>' +
     '</div>';
 
+  // アプリ(MainScreen.kt)と同じ並び: 1段目 ヒット/アウト/エラー/nHnE、2段目 死球/妨害/(スクイズ)
   h += '<div class="resultbtns">' +
     '<button class="btn res-hit" ' + (disabled ? 'disabled' : '') + ' onclick="RB.beginResult(' + jsStr(RESULT_HIT) + ')">ヒット</button>' +
     '<button class="btn res-out" ' + (disabled ? 'disabled' : '') + ' onclick="RB.beginResult(' + jsStr(RESULT_OUT) + ')">アウト</button>' +
-    '<button class="btn res-error" ' + (disabled ? 'disabled' : '') + ' onclick="RB.beginResult(' + jsStr(RESULT_ERROR) + ')">エラー</button>' +
-    '<button class="btn res-sac" ' + (disabled ? 'disabled' : '') + ' onclick="RB.beginResult(' + jsStr(RESULT_SAC) + ')">犠牲</button>' +
-    '<button class="btn res-hbp" ' + (disabled ? 'disabled' : '') + ' onclick="RB.beginResult(' + jsStr(RESULT_HBP) + ')">死球</button>' +
-    '<button class="btn res-interfere" ' + (disabled ? 'disabled' : '') + ' onclick="RB.beginResult(' + jsStr(RESULT_INTERFERE) + ')">妨害</button>' +
+    '<button class="btn res-outline" ' + (disabled ? 'disabled' : '') + ' onclick="RB.beginResult(' + jsStr(RESULT_ERROR) + ')">エラー</button>' +
+    '<button class="btn res-outline" ' + (disabled ? 'disabled' : '') + ' onclick="RB.beginResult(' + jsStr(RESULT_NHNE) + ')">nHnE</button>' +
     '</div>';
-
-  if (isSqueezeSituation(state.bases, state.outs)) {
-    h += '<div class="subbtnrow"><button class="btn res-squeeze block" ' + (disabled ? 'disabled' : '') +
-      ' onclick="RB.beginResult(' + jsStr(RESULT_SQUEEZE) + ')">スクイズ</button></div>';
-  }
-  h += '<div class="subbtnrow"><button class="btn res-nhne block" ' + (disabled ? 'disabled' : '') +
-    ' onclick="RB.beginResult(' + jsStr(RESULT_NHNE) + ')">安打+失策（nHnE）</button></div>';
+  h += '<div class="resultbtns2">' +
+    '<button class="btn res-outline" ' + (disabled ? 'disabled' : '') + ' onclick="RB.beginResult(' + jsStr(RESULT_HBP) + ')">死球</button>' +
+    '<button class="btn res-outline" ' + (disabled ? 'disabled' : '') + ' onclick="RB.beginResult(' + jsStr(RESULT_INTERFERE) + ')">妨害</button>' +
+    (isSqueezeSituation(state.bases, state.outs)
+      ? '<button class="btn res-squeeze" ' + (disabled ? 'disabled' : '') + ' onclick="RB.beginResult(' + jsStr(RESULT_SQUEEZE) + ')">スクイズ</button>'
+      : '<span></span>') +
+    '</div>';
 
   h += '<div class="row" style="margin-top:10px">' +
     '<button class="btn outline" style="flex:1" ' + (state.pending ? 'disabled' : '') + ' onclick="RB.openChangePitcher()">投手交代</button>' +
-    '<button class="btn outline" style="flex:1" ' + (state.pending ? 'disabled' : '') + ' onclick="RB.changeSides()">チェンジ</button>' +
+    '<button class="btn outline" style="flex:1" ' + (state.pending ? 'disabled' : '') + ' onclick="RB.openOrderEdit()">メンバー変更</button>' +
     '</div>';
   h += '<div class="row" style="margin-top:8px">' +
     '<button class="btn gray" style="flex:1" ' + (!undoStack.length ? 'disabled' : '') + ' onclick="RB.undoLast()">前の球</button>' +
@@ -1330,6 +1327,7 @@ function renderModal(){
   else if (modal.type === 'result') html = renderResultModal();
   else if (modal.type === 'pitcherPrompt') html = renderPitcherPromptModal();
   else if (modal.type === 'yt') html = renderYtModal();
+  else if (modal.type === 'orderEdit') html = renderOrderEditModal();
   root.innerHTML = html;
 }
 
@@ -1370,6 +1368,40 @@ function renderPitcherModal(){
     '<div class="footbtns"><button class="btn outline block" onclick="RB.closeModal()">キャンセル</button></div>' +
     '</div></div>';
 }
+// 試合中のメンバー変更（挿入・削除。打順インデックスは insertIntoOrder/removeFromOrder が自動補正）
+function renderOrderEditModal(){
+  var team = modal.team;
+  var order = orderOf(team);
+  var cur = indexOf(team);
+  var rows = order.map(function(name, i){
+    var isCur = (state.attacking === team && i === cur);
+    return '<div class="oi">' +
+      '<div class="no">' + (i + 1) + '</div>' +
+      '<div class="nm">' + esc(name) + (isCur ? '<span class="cur">← 現打者</span>' : '') + '</div>' +
+      '<button class="del" style="color:#2f6fdd" title="この下に挿入" onclick="RB.orderEditInsert(' + (i + 1) + ')">＋</button>' +
+      '<button class="del" onclick="RB.orderEditRemove(' + i + ')">×</button>' +
+      '</div>';
+  }).join('');
+  return '<div class="overlay" onclick="RB.closeModalIfBg(event)"><div class="sheet" onclick="event.stopPropagation()">' +
+    '<h3>メンバー変更</h3>' +
+    '<div class="tabs" style="margin-top:0">' +
+    '<div class="tab' + (team === 'first' ? ' on' : '') + '" onclick="RB.orderEditTeam(\\'first\\')">先攻（' + state.firstOrder.length + '人）</div>' +
+    '<div class="tab' + (team === 'second' ? ' on' : '') + '" onclick="RB.orderEditTeam(\\'second\\')">後攻（' + state.secondOrder.length + '人）</div>' +
+    '</div>' +
+    '<div class="orderlist" style="max-height:300px;overflow-y:auto">' +
+    '<div class="addrow" onclick="RB.orderEditInsert(0)">＋ 先頭に挿入</div>' +
+    rows +
+    '<div class="addrow" onclick="RB.orderEditInsert(' + order.length + ')">＋ 最後尾に追加</div>' +
+    '</div>' +
+    '<div class="sub">＋で挿入位置を選べます。×で打順から外します（途中参加・途中退場に対応）</div>' +
+    '<div class="footbtns"><button class="btn outline block" onclick="RB.closeModal()">閉じる</button></div>' +
+    '</div></div>';
+}
+function openOrderEdit(team){
+  modal = { type: 'orderEdit', team: team || state.attacking || 'first' };
+  renderModal();
+}
+
 function renderYtModal(){
   var games = loadYtGames();
   var g = games[modal.gameIndex];
@@ -1617,8 +1649,10 @@ var RB = {
   updatePickerQuery: function(v){ modal.query = v; renderModal(); },
   pickMember: function(name){
     var team = modal.team;
-    insertIntoOrder(team, orderOf(team).length, name);
-    closeModal();
+    var pos = (modal.insertPos != null) ? modal.insertPos : orderOf(team).length;
+    var back = modal.backToOrderEdit;
+    insertIntoOrder(team, pos, name);
+    if (back) openOrderEdit(team); else closeModal();
   },
   swapOrders: swapOrders,
   setStartPitcher: function(team, name){
@@ -1642,6 +1676,19 @@ var RB = {
   openYt: openYt,
   ytOffset: ytOffset,
   ytCopy: ytCopy,
+  openOrderEdit: function(){ openOrderEdit(); },
+  orderEditTeam: function(t){ modal.team = t; renderModal(); },
+  orderEditInsert: function(pos){
+    openMemberPicker({ title: '打順 ' + (pos + 1) + ' 番に挿入',
+      team: modal.team, insertPos: pos, backToOrderEdit: true });
+  },
+  orderEditRemove: function(i){
+    var team = modal.team;
+    var name = orderOf(team)[i];
+    if (!window.confirm(name + ' を打順から外します。よろしいですか？')) return;
+    removeFromOrder(team, i);
+    renderModal();
+  },
   closeModal: closeModal,
   closeModalIfBg: function(ev){ if (ev.target.classList.contains('overlay')) closeModal(); },
   setPopup: function(key, val){ modal[key] = val; renderModal(); },
