@@ -18,6 +18,11 @@
 // デプロイを作り直してURLが変わったときは、下のGAS_URLを新しい /exec に差し替えること。
 var GAS_URL = "https://script.google.com/macros/s/AKfycbzGOx89-rBxlZaPo2S1UDKbURy_4X9ZLGf-stYZ4Wh1G6sw07OudAfKUoGC6kAC1fGQKg/exec";
 
+// 記録ページはGAS直接アクセスが必要（fetch経由では動かない）
+if (location.search.indexOf("view=record") !== -1) {
+  location.href = GAS_URL + location.search;
+}
+
 fetch(GAS_URL + (location.search ? location.search + "&raw=1" : "?raw=1"))
   .then(function (r) { return r.text(); })
   .then(function (t) {
