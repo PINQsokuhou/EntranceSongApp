@@ -69,6 +69,7 @@ border-top:1px solid #24252b}
 .statusbar{background:#17181d;border:1px solid #26272e;border-radius:14px;padding:14px 16px;margin:10px 0}
 .statusbar .inning{font-size:1.3em;font-weight:800;text-align:center;letter-spacing:.02em}
 .statusbar .stadium{color:#9fa3ad;font-size:.78em;text-align:center;margin-top:2px}
+.statusbar .gtime{color:#f5a623;font-size:.82em;font-weight:700;text-align:center;margin-top:4px}
 .score{display:flex;justify-content:center;align-items:baseline;gap:14px;margin:10px 0 4px;font-size:1.5em;font-weight:800}
 .score .vs{color:#63666e;font-size:.6em}
 .score .fteam,.score .steam{min-width:2.2em;text-align:center}
@@ -524,6 +525,7 @@ function rosterByName(name){
 function defaultState(){
   return {
     started: false, ended: false,
+    startedAt: null, durationMs: 0, paStartMs: null,
     dateLabel: '', stadium: '', stadiumConfirmed: false,
     inning: 1, attacking: 'first',
     firstOrder: [], secondOrder: [],
@@ -552,6 +554,118 @@ function currentBatter(){
 function currentPitcherName(){
   var def = defendingTeam();
   return def === 'first' ? state.pitcherOfFirst : state.pitcherOfSecond;
+}
+
+// ================= 試合時間タイマー =================
+function timerLabel(ms){
+  var t = Math.floor(ms / 1000), h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), s = t % 60;
+  function p(n){ return (n < 10 ? '0' : '') + n; }
+  return h ? h + ':' + p(m) + ':' + p(s) : m + ':' + p(s);
+}
+function durLabel(ms){
+  var m = Math.round(ms / 60000), h = Math.floor(m / 60);
+  return h ? h + '時間' + (m % 60) + '分' : m + '分';
+}
+// 試合履歴（直近3試合）: 試合時間とYouTube概要欄用タイムスタンプの元データを保存
+function loadYtGames(){
+  try { var s = localStorage.getItem('ppYtGames'); if (s) return JSON.parse(s); } catch (e) {}
+  return [];
+}
+function saveYtGames(a){
+  try { localStorage.setItem('ppYtGames', JSON.stringify(a)); } catch (e) {}
+}
+function pushYtGame(rec){
+  var a = loadYtGames();
+  a.unshift(rec);
+  a = a.slice(0, 3); // 直近3試合まで保持
+  saveYtGames(a);
+}
+// 試合中は1秒ごとに経過時間の表示だけを更新する（全体は再描画しない）
+setInterval(function(){
+  var el = byId('gameTimer');
+  if (el && state && state.started && !state.ended && state.startedAt) {
+    el.textContent = timerLabel(Date.now() - state.startedAt);
+  }
+}, 1000);
+
+// ================= YouTube概要欄用タイムスタンプ（Kotlin YoutubeTimestamps.kt の移植） =================
+function ytFormat(sec){
+  var s = Math.max(0, sec), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), ss = s % 60;
+  function p(n){ return (n < 10 ? '0' : '') + n; }
+  return h > 0 ? h + ':' + p(m) + ':' + p(ss) : m + ':' + p(ss);
+}
+function ytFormatOffset(sec){
+  var sign = sec < 0 ? '−' : '+', s = Math.abs(sec);
+  return sign + Math.floor(s / 60) + ':' + ((s % 60 < 10 ? '0' : '') + (s % 60));
+}
+function ytTimely(log, base){
+  if (log.rbi >= 2) return log.rbi + '点タイムリー' + base;
+  if (log.rbi === 1) return 'タイムリー' + base;
+  return base;
+}
+function ytRbiSuffix(log){ return log.rbi > 0 ? '（打点' + log.rbi + '）' : ''; }
+function ytHas(log, s){ return (log.situations || []).indexOf(s) >= 0; }
+function ytLabel(log){
+  var t = log.resultType;
+  if (t === RESULT_HIT) {
+    if (log.basesGained === 4) {
+      if (log.runs === 1) return 'ソロホームラン';
+      if (log.runs === 2) return '2ランホームラン';
+      if (log.runs === 3) return '3ランホームラン';
+      return '満塁ホームラン';
+    }
+    if (log.basesGained === 3) return ytTimely(log, '3塁打');
+    if (log.basesGained === 2) return ytTimely(log, '2塁打');
+    return ytTimely(log, 'ヒット');
+  }
+  if (t === RESULT_OUT) return ytHas(log, '併殺') ? '併殺' : ((log.playResult || 'ゴロ') + 'アウト');
+  if (t === RESULT_ERROR) return 'エラー出塁' + (log.runs > 0 ? '（' + log.runs + '点）' : '');
+  if (t === RESULT_NHNE) return ytTimely(log, log.result);
+  if (t === RESULT_SAC) return (ytHas(log, 'タッチアップ') ? '犠飛' : '犠打') + ytRbiSuffix(log);
+  if (t === RESULT_SQUEEZE) return ytHas(log, 'スクイズ失敗') ? 'スクイズ失敗' : 'スクイズ成功';
+  if (t === RESULT_BB) return '四球' + ytRbiSuffix(log);
+  if (t === RESULT_HBP) return '死球' + ytRbiSuffix(log);
+  if (t === RESULT_INTERFERE) return '妨害出塁' + ytRbiSuffix(log);
+  if (t === RESULT_K_SWING || t === RESULT_K_LOOK) return '三振';
+  return log.result;
+}
+// ハイライト行の時刻: 結果ボタン押下の10秒前（打点を生んだ1球が映る位置）
+function ytHighlightSec(log){
+  var press = log.resultPressSec > 0 ? log.resultPressSec : (log.paStartSec || 0);
+  return press - 10;
+}
+function ytBuild(game){
+  var off = game.tsOffsetSec || 0;
+  var out = [];
+  out.push('ハイライト');
+  var hs = (game.logs || []).filter(function(l){ return l.runs > 0; });
+  if (!hs.length) out.push('（得点シーンなし）');
+  else hs.forEach(function(l){
+    out.push(ytFormat(ytHighlightSec(l) + off) + ' ' + l.inning + '回' + l.topBottom + ' ' + l.batterName + ytLabel(l));
+  });
+  out.push('');
+  out.push('各選手の打席');
+  function teamBlock(title, names){
+    out.push(title);
+    var seen = {};
+    var uniqNames = [];
+    (names || []).forEach(function(n){ if (!seen[n]) { seen[n] = true; uniqNames.push(n); } });
+    uniqNames.forEach(function(name, i){
+      out.push((i + 1) + '.' + name);
+      var j = 0;
+      (game.logs || []).forEach(function(l){
+        if (l.batterName !== name) return;
+        j++;
+        out.push(ytFormat((l.paStartSec || 0) + off) + ' 第' + j + '打席 ' + ytLabel(l));
+      });
+      out.push('');
+    });
+  }
+  teamBlock('先攻チーム', game.firstOrder);
+  teamBlock('後攻チーム', game.secondOrder);
+  while (out.length && out[out.length - 1] === '') out.pop();
+  // 注意: このファイルはGASのテンプレート文字列内にあるため改行エスケープを直接書けない
+  return out.join(String.fromCharCode(10));
 }
 
 // ================= 永続化（ブラウザ再読込対策） =================
@@ -723,6 +837,8 @@ function startGame(){
   if (!state.pitcherOfSecond) { showToast('後攻チームの先発投手を設定してください'); return; }
   if (!state.stadium.trim()) { showToast('球場を設定してください'); return; }
   state.started = true;
+  state.startedAt = Date.now(); // 試合時間タイマー開始
+  state.paStartMs = state.startedAt; // 1人目の打席開始 = 試合開始
   undoStack = [];
   state.dateLabel = todayStr();
   state.inning = 1; state.attacking = 'first';
@@ -802,7 +918,8 @@ function beginResult(type, opts){
     balls: state.balls,
     strikes: state.strikes,
     pitchCount: state.pitchCount,
-    autoChange: autoChange
+    autoChange: autoChange,
+    pressMs: Date.now() // YouTubeタイムスタンプ用: 結果ボタン押下時刻
   };
   openResultPopup();
   saveState(); render();
@@ -855,7 +972,10 @@ function confirmResult(payload){
     nextInning: state.inning, nextTopBottom: topBottomLabel(),
     nextOuts: willChange ? 0 : state.outs, nextBases: basesStrOf(state.bases),
     nextScoreFirst: state.scoreFirst, nextScoreSecond: state.scoreSecond,
-    runs: payload.runs, rbi: payload.rbi
+    runs: payload.runs, rbi: payload.rbi,
+    // YouTubeタイムスタンプ用（試合開始からの経過秒）
+    paStartSec: (state.startedAt && state.paStartMs) ? Math.max(0, Math.floor((state.paStartMs - state.startedAt) / 1000)) : 0,
+    resultPressSec: (state.startedAt && p.pressMs) ? Math.max(0, Math.floor((p.pressMs - state.startedAt) / 1000)) : 0
   };
   state.detailLogs.push(entry);
 
@@ -866,6 +986,7 @@ function confirmResult(payload){
     var nm = order[ni];
     state.atBatCounts[nm] = (state.atBatCounts[nm] || 0) + 1;
   }
+  state.paStartMs = Date.now(); // 次打者の打席開始時刻
 
   state.balls = 0; state.strikes = 0; state.pitchCount = 0; state.curPitches = [];
   state.pending = null;
@@ -891,6 +1012,7 @@ function changeSides(){
     var nm = order[ni];
     state.atBatCounts[nm] = (state.atBatCounts[nm] || 0) + 1;
   }
+  state.paStartMs = Date.now(); // 次打者の打席開始時刻
   maybePromptPitcher();
   saveState(); render(); postLiveState();
 }
@@ -919,11 +1041,26 @@ function endGame(){
     holds: stats.filter(function(s){ return s.hold; }).map(function(s){ return s.name; }),
     saves: stats.filter(function(s){ return s.save; }).map(function(s){ return s.name; })
   };
+  var durMs = state.startedAt ? (Date.now() - state.startedAt) : 0;
   showToast('保存中…');
   postJson(GAS_URL, payload).then(function(){
     postLiveEnd();
     state.ended = true;
     state.finalStats = stats;
+    state.durationMs = durMs;
+    // 試合時間とYouTube用タイムスタンプの元データを記録（直近3試合）
+    pushYtGame({
+      date: state.dateLabel, stadium: state.stadium,
+      scoreF: state.scoreFirst, scoreS: state.scoreSecond,
+      ms: durMs, tsOffsetSec: 0,
+      firstOrder: state.firstOrder.slice(), secondOrder: state.secondOrder.slice(),
+      logs: state.detailLogs.map(function(l){
+        return { inning: l.inning, topBottom: l.topBottom, batterName: l.batterName,
+          resultType: l.resultType, result: l.result, basesGained: l.basesGained,
+          runs: l.runs, rbi: l.rbi, situations: l.situations || [],
+          playResult: l.playResult, paStartSec: l.paStartSec || 0, resultPressSec: l.resultPressSec || 0 };
+      })
+    });
     try { localStorage.removeItem('ppRecordState'); } catch (e) {}
     render();
     showToast('保存しました');
@@ -1052,6 +1189,18 @@ function renderSetup(){
     (canStart ? '' : 'disabled') + ' onclick="RB.startGame()">試合開始</button>' +
     '</div>';
 
+  // 過去の試合（直近3試合）: 試合時間とYouTube用タイムスタンプ
+  var past = loadYtGames();
+  if (past.length) {
+    h += '<h2>終了した試合（直近' + past.length + '試合）</h2><div class="card" style="padding:0">' +
+      past.map(function(g, i){
+        return '<div class="statline" style="cursor:pointer" onclick="RB.openYt(' + i + ')">' +
+          '<span>' + esc(g.date) + ' ' + esc(g.stadium) + '（' + g.scoreF + '－' + g.scoreS + '）</span>' +
+          '<span>' + (g.ms ? durLabel(g.ms) : '') + '　📋</span></div>';
+      }).join('') + '</div>' +
+      '<div class="sub">タップするとYouTube概要欄用のタイムスタンプが開きます</div>';
+  }
+
   return h;
 }
 
@@ -1077,6 +1226,7 @@ function renderGame(){
   h += '<div class="statusbar">' +
     '<div class="inning">' + state.inning + '回' + topBottomLabel() + '</div>' +
     (state.stadium ? '<div class="stadium">' + esc(state.stadium) + '　' + esc(state.dateLabel) + '</div>' : '') +
+    (state.startedAt ? '<div class="gtime">⏱ <span id="gameTimer">' + timerLabel(Date.now() - state.startedAt) + '</span></div>' : '') +
     '<div class="score">' +
     '<span class="fteam' + (state.attacking === 'first' ? ' atk' : '') + '">' + state.scoreFirst + '</span>' +
     '<span class="vs">先攻－後攻</span>' +
@@ -1148,6 +1298,7 @@ function renderEnded(){
     '<div class="score"><span class="fteam">' + state.scoreFirst + '</span><span class="vs">先攻－後攻</span>' +
     '<span class="steam">' + state.scoreSecond + '</span></div>' +
     '<div class="sub" style="text-align:center">' + esc(state.stadium) + '　' + esc(state.dateLabel) + '</div>' +
+    (state.durationMs ? '<div class="sub" style="text-align:center">⏱ 試合時間 ' + durLabel(state.durationMs) + '</div>' : '') +
     '</div>';
   if (state.finalStats && state.finalStats.length) {
     h += '<h2>投手成績</h2><div class="card" style="padding:0">' +
@@ -1160,6 +1311,9 @@ function renderEnded(){
         return '<div class="statline"><span>' + esc(s.name) + '（' + esc(s.team) + '）' + chips + '</span>' +
           '<span>' + s.runs + '失点（自責' + s.earnedRuns + '）</span></div>';
       }).join('') + '</div>';
+  }
+  if (loadYtGames().length) {
+    h += '<div class="card"><button class="btn orange block" onclick="RB.openYt(0)">📋 YouTube用タイムスタンプ</button></div>';
   }
   h += '<div class="card"><button class="btn green block" style="height:50px" onclick="RB.newGameAfterEnd()">新しい試合を始める</button></div>';
   return h;
@@ -1175,6 +1329,7 @@ function renderModal(){
   else if (modal.type === 'pitcher') html = renderPitcherModal();
   else if (modal.type === 'result') html = renderResultModal();
   else if (modal.type === 'pitcherPrompt') html = renderPitcherPromptModal();
+  else if (modal.type === 'yt') html = renderYtModal();
   root.innerHTML = html;
 }
 
@@ -1215,6 +1370,53 @@ function renderPitcherModal(){
     '<div class="footbtns"><button class="btn outline block" onclick="RB.closeModal()">キャンセル</button></div>' +
     '</div></div>';
 }
+function renderYtModal(){
+  var games = loadYtGames();
+  var g = games[modal.gameIndex];
+  if (!g) return '';
+  var text = ytBuild(g);
+  var off = g.tsOffsetSec || 0;
+  return '<div class="overlay" onclick="RB.closeModalIfBg(event)"><div class="sheet" onclick="event.stopPropagation()">' +
+    '<h3>YouTube用タイムスタンプ</h3>' +
+    '<div class="sub">' + esc(g.date) + ' ' + esc(g.stadium) + '（' + g.scoreF + '－' + g.scoreS + '）' +
+    (g.ms ? '　試合時間 ' + durLabel(g.ms) : '') + '</div>' +
+    '<div class="sub">動画のズレ補正: <b>' + ytFormatOffset(off) + '</b>（動画内で試合開始が 0:00 より後なら＋で合わせる）</div>' +
+    '<div class="row" style="margin:6px 0">' +
+    '<button class="btn gray" style="flex:1" onclick="RB.ytOffset(-10)">−10秒</button>' +
+    '<button class="btn gray" style="flex:1" onclick="RB.ytOffset(-1)">−1秒</button>' +
+    '<button class="btn gray" style="flex:1" onclick="RB.ytOffset(1)">＋1秒</button>' +
+    '<button class="btn gray" style="flex:1" onclick="RB.ytOffset(10)">＋10秒</button>' +
+    '</div>' +
+    '<textarea id="ytText" readonly style="width:100%;height:240px;background:#0d0d10;color:#e9e9ec;' +
+    'border:1px solid #33343c;border-radius:10px;padding:10px;font-size:.82em;line-height:1.5">' + esc(text) + '</textarea>' +
+    '<div class="footbtns">' +
+    '<button class="btn block" onclick="RB.ytCopy()">全文コピー</button>' +
+    '<button class="btn outline block" onclick="RB.closeModal()">閉じる</button>' +
+    '</div>' +
+    '</div></div>';
+}
+function openYt(i){ modal = { type: 'yt', gameIndex: i }; renderModal(); }
+function ytOffset(delta){
+  var games = loadYtGames();
+  var g = games[modal.gameIndex];
+  if (!g) return;
+  g.tsOffsetSec = (g.tsOffsetSec || 0) + delta;
+  saveYtGames(games);
+  renderModal();
+}
+function ytCopy(){
+  var ta = byId('ytText');
+  if (!ta) return;
+  var done = function(){ showToast('コピーしました。YouTubeの概要欄に貼り付けてください'); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(ta.value).then(done, function(){
+      ta.select(); document.execCommand('copy'); done();
+    });
+  } else {
+    ta.select(); document.execCommand('copy'); done();
+  }
+}
+
 function renderPitcherPromptModal(){
   var def = defendingTeam();
   return '<div class="overlay center"><div class="sheet">' +
@@ -1437,6 +1639,9 @@ var RB = {
   undoLast: undoLast,
   endGame: endGame,
   newGameAfterEnd: newGameAfterEnd,
+  openYt: openYt,
+  ytOffset: ytOffset,
+  ytCopy: ytCopy,
   closeModal: closeModal,
   closeModalIfBg: function(ev){ if (ev.target.classList.contains('overlay')) closeModal(); },
   setPopup: function(key, val){ modal[key] = val; renderModal(); },
