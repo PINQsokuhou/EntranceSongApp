@@ -1019,8 +1019,8 @@ function renderSetup(){
     '</div>';
 
   h += '<div class="tabs">' +
-    '<div class="tab' + (setupTab === 'first' ? ' on' : '') + '" onclick="RB.switchSetupTab(\'first\')">先攻（' + state.firstOrder.length + '人）</div>' +
-    '<div class="tab' + (setupTab === 'second' ? ' on' : '') + '" onclick="RB.switchSetupTab(\'second\')">後攻（' + state.secondOrder.length + '人）</div>' +
+    '<div class="tab' + (setupTab === 'first' ? ' on' : '') + '" onclick="RB.switchSetupTab(\\'first\\')">先攻（' + state.firstOrder.length + '人）</div>' +
+    '<div class="tab' + (setupTab === 'second' ? ' on' : '') + '" onclick="RB.switchSetupTab(\\'second\\')">後攻（' + state.secondOrder.length + '人）</div>' +
     '</div>';
 
   h += orderListHtml(setupTab);
@@ -1030,7 +1030,7 @@ function renderSetup(){
     if (state.secondOrder.length === 0) {
       h += '<div class="sub">先に後攻の打順を組んでください</div>';
     } else {
-      h += '<select id="pitcherSecondSel" style="width:100%" onchange="RB.setStartPitcher(\'second\',this.value)">' +
+      h += '<select id="pitcherSecondSel" style="width:100%" onchange="RB.setStartPitcher(\\'second\\',this.value)">' +
         '<option value="">未選択</option>' +
         state.secondOrder.map(function(n){
           return '<option value="' + esc(n) + '"' + (state.pitcherOfSecond === n ? ' selected' : '') + '>' + esc(n) + '</option>';
@@ -1309,13 +1309,13 @@ function renderResultModal(){
 
   if (isSwitch) {
     h += '<div class="sectionlabel">この打席の左右（必須）</div><div class="grid2">' +
-      selBox('右打ち', m.batSide === '右', 'RB.setPopup(\'batSide\',\'右\')') +
-      selBox('左打ち', m.batSide === '左', 'RB.setPopup(\'batSide\',\'左\')') + '</div>';
+      selBox('右打ち', m.batSide === '右', 'RB.setPopup(\\'batSide\\',\\'右\\')') +
+      selBox('左打ち', m.batSide === '左', 'RB.setPopup(\\'batSide\\',\\'左\\')') + '</div>';
   }
   if (isSqueeze) {
     h += '<div class="sectionlabel">スクイズの結果（必須）</div><div class="grid2">' +
-      selBox('成功（三塁走者 生還）', m.squeezeSuccess === true, 'RB.setPopupBool(\'squeezeSuccess\',true)') +
-      selBox('失敗（三塁走者 アウト）', m.squeezeSuccess === false, 'RB.setPopupBool(\'squeezeSuccess\',false)') + '</div>';
+      selBox('成功（三塁走者 生還）', m.squeezeSuccess === true, 'RB.setPopupBool(\\'squeezeSuccess\\',true)') +
+      selBox('失敗（三塁走者 アウト）', m.squeezeSuccess === false, 'RB.setPopupBool(\\'squeezeSuccess\\',false)') + '</div>';
   }
   if (isNhne) {
     h += '<div class="sectionlabel">ヒット数 / エラー数（合計が進塁数）</div><div class="row" style="align-items:center">' +
@@ -1328,19 +1328,19 @@ function renderResultModal(){
   if (needBasesGained) {
     var labels = type === RESULT_HIT ? ['単打', '二塁打', '三塁打', '本塁打'] : ['1', '2', '3', '4'];
     h += '<div class="sectionlabel">' + (type === RESULT_HIT ? '塁打数' : '進塁数（=失策数）') + '</div><div class="grid4">' +
-      labels.map(function(l, i){ return selBox(l, m.basesGained === i + 1, 'RB.setPopup(\'basesGained\',' + (i + 1) + ')'); }).join('') + '</div>';
+      labels.map(function(l, i){ return selBox(l, m.basesGained === i + 1, 'RB.setPopup(\\'basesGained\\',' + (i + 1) + ')'); }).join('') + '</div>';
   }
   if (needPlayResult) {
     h += '<div class="sectionlabel">打球結果（進塁の判定に使用。フライを1バウンド捕球ならゴロ）</div><div class="grid3">' +
-      PLAY_RESULTS.map(function(r){ return selBox(r, m.playResult === r, 'RB.setPopup(\'playResult\',' + jsStr(r) + ')'); }).join('') + '</div>';
+      PLAY_RESULTS.map(function(r){ return selBox(r, m.playResult === r, 'RB.setPopup(\\'playResult\\',' + jsStr(r) + ')'); }).join('') + '</div>';
   }
   if (batted) {
     h += '<div class="sectionlabel">打球方向</div><div class="grid" style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px">' +
-      DIR_FIELD.map(function(d){ return selBox(d[1], m.direction === d[0], 'RB.setPopup(\'direction\',' + d[0] + ')', true); }).join('') + '</div>' +
+      DIR_FIELD.map(function(d){ return selBox(d[1], m.direction === d[0], 'RB.setPopup(\\'direction\\',' + d[0] + ')', true); }).join('') + '</div>' +
       '<div class="spacer8"></div><div class="grid2">' +
-      DIR_OTHER.map(function(d){ return selBox(d[1], m.direction === d[0], 'RB.setPopup(\'direction\',' + d[0] + ')', true); }).join('') + '</div>';
+      DIR_OTHER.map(function(d){ return selBox(d[1], m.direction === d[0], 'RB.setPopup(\\'direction\\',' + d[0] + ')', true); }).join('') + '</div>';
     h += '<div class="sectionlabel">打球性質（記録用）</div><div class="grid3">' +
-      BALL_TYPES.map(function(t){ return selBox(t, m.ballType === t, 'RB.setPopup(\'ballType\',' + jsStr(t) + ')'); }).join('') + '</div>';
+      BALL_TYPES.map(function(t){ return selBox(t, m.ballType === t, 'RB.setPopup(\\'ballType\\',' + jsStr(t) + ')'); }).join('') + '</div>';
   }
   h += '<div class="sectionlabel">バット種類</div><div class="grid4">' +
     BAT_DEFS.slice(0, 4).map(function(b){ return batBox(b, m.batType === b.code); }).join('') + '</div>' +
@@ -1353,18 +1353,18 @@ function renderResultModal(){
   }
   if (askTagThird) {
     h += '<div class="sectionlabel">三塁走者のタッチアップ（必須）</div><div class="grid2">' +
-      selBox('生還した', m.tagThird === true, 'RB.setPopupBool(\'tagThird\',true)') +
-      selBox('進まない', m.tagThird === false, 'RB.setPopupBool(\'tagThird\',false)') + '</div>';
+      selBox('生還した', m.tagThird === true, 'RB.setPopupBool(\\'tagThird\\',true)') +
+      selBox('進まない', m.tagThird === false, 'RB.setPopupBool(\\'tagThird\\',false)') + '</div>';
   }
   if (askTagSecond) {
     h += '<div class="sectionlabel">二塁走者のタッチアップ（必須）</div><div class="grid2">' +
-      selBox('三塁へ進んだ', m.tagSecond === true, 'RB.setPopupBool(\'tagSecond\',true)') +
-      selBox('進まない', m.tagSecond === false, 'RB.setPopupBool(\'tagSecond\',false)') + '</div>';
+      selBox('三塁へ進んだ', m.tagSecond === true, 'RB.setPopupBool(\\'tagSecond\\',true)') +
+      selBox('進まない', m.tagSecond === false, 'RB.setPopupBool(\\'tagSecond\\',false)') + '</div>';
   }
   if (askFumble) {
     h += '<div class="sectionlabel">ワンファンブル（三塁走者の生還／必須）</div><div class="grid2">' +
-      selBox('あった（生還）', m.fumble === true, 'RB.setPopupBool(\'fumble\',true)') +
-      selBox('なし', m.fumble === false, 'RB.setPopupBool(\'fumble\',false)') + '</div>';
+      selBox('あった（生還）', m.fumble === true, 'RB.setPopupBool(\\'fumble\\',true)') +
+      selBox('なし', m.fumble === false, 'RB.setPopupBool(\\'fumble\\',false)') + '</div>';
   }
   if (autoStart) h += '<div class="autostart">⚡ 2アウト フルカウント: 自動スタート適用（フォースされた走者が+1進塁）</div>';
 
@@ -1380,9 +1380,9 @@ function renderResultModal(){
       selBox('二塁', shownBases[1], 'RB.toggleOvBase(1)') +
       selBox('三塁', shownBases[2], 'RB.toggleOvBase(2)') + '</div>' +
       '<div class="row" style="margin-top:8px;align-items:center">' +
-      '<span class="sub">アウト</span><input type="number" min="0" max="3" style="width:56px" value="' + shownOuts + '" onchange="RB.setOv(\'ovOuts\',this.value)">' +
-      '<span class="sub">得点</span><input type="number" min="0" style="width:56px" value="' + shownRuns + '" onchange="RB.setOv(\'ovRuns\',this.value)">' +
-      '<span class="sub">打点</span><input type="number" min="0" style="width:56px" value="' + shownRbi + '" onchange="RB.setOv(\'ovRbi\',this.value)">' +
+      '<span class="sub">アウト</span><input type="number" min="0" max="3" style="width:56px" value="' + shownOuts + '" onchange="RB.setOv(\\'ovOuts\\',this.value)">' +
+      '<span class="sub">得点</span><input type="number" min="0" style="width:56px" value="' + shownRuns + '" onchange="RB.setOv(\\'ovRuns\\',this.value)">' +
+      '<span class="sub">打点</span><input type="number" min="0" style="width:56px" value="' + shownRbi + '" onchange="RB.setOv(\\'ovRbi\\',this.value)">' +
       '</div>';
   }
 
