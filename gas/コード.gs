@@ -63,8 +63,9 @@ function doGet(e) {
   let h;
   // 試合ページ（ライブは毎回最新、終了試合はキャッシュ）
   if (p.view === "game") {
+    // 終了した試合の内容はもう変わらないので長めにキャッシュする（ライブは毎回最新）
     h = (p.sheet === LIVE_SHEET) ? renderGame(p.sheet)
-      : cached(cache, "g:" + p.sheet, 300, function () { return renderGame(p.sheet); });
+      : cached(cache, "g:" + p.sheet, 1800, function () { return renderGame(p.sheet); });
   } else if (p.view === "stats") {
     // 個人成績（種目・期間ごとにキャッシュ）
     const key = "s:" + (p.type || "") + ":" + (p.period || "") + ":" + (p.stat || "");
@@ -396,7 +397,10 @@ function gameSheetNames() {
 function rowsOf(name) {
   const sh = ss().getSheetByName(name);
   if (!sh || sh.getLastRow() < 2) return [];
-  const v = sh.getDataRange().getValues();
+  // 打席記録は A〜AB(28列)だけ。getDataRange() だと右側の投手成績ブロック(AD列〜)まで
+  // 読んでしまい、全試合経過のような大きいシートで無駄に遅くなる
+  const cols = Math.min(28, Math.max(1, sh.getMaxColumns()));
+  const v = sh.getRange(1, 1, sh.getLastRow(), cols).getValues();
   const rows = [];
   for (let r = 1; r < v.length; r++) {
     if (!v[r][0] && v[r][0] !== 0) continue;
@@ -404,6 +408,50 @@ function rowsOf(name) {
     rows.push(rowObj(v[r]));
   }
   return rows;
+}
+
+// 試合一覧カード用の要約（球場・チーム名・スコア）をまとめて返す。
+// 終了した試合の内容は変わらないので ScriptProperties に永続保存し、
+// 一覧を開くたびに全試合シート（数十枚）を読み直さないようにする。
+// これが無いとシート1枚ごとにスプレッドシートへ問い合わせが飛び、一覧の表示に十数秒かかる。
+function gameSummaries(names) {
+  const props = PropertiesService.getScriptProperties();
+  let all = {};
+  try { all = props.getProperties(); } catch (e) { all = {}; } // 1回の呼び出しで全部読む
+  const map = {}, add = {};
+  names.forEach(function (n) {
+    const raw = all["gs:" + n];
+    if (raw) {
+      try { map[n] = JSON.parse(raw); return; } catch (e) { /* 壊れていたら作り直す */ }
+    }
+    const rows = rowsOf(n);
+    if (rows.length === 0) return;
+    const l = lineScore(rows), tn = teamNames(rows);
+    const o = { st: rows[0].stadium, f: tn.f, s: tn.s, a: l.scoreF, b: l.scoreS };
+    map[n] = o;
+    add["gs:" + n] = JSON.stringify(o);
+  });
+  if (Object.keys(add).length) {
+    try { props.setProperties(add, false); } catch (e) {} // false = 既存プロパティは消さない
+  }
+  return map;
+}
+
+// スプレッドシートを手で修正したあとに1回実行する。
+// 試合要約の永続キャッシュと一覧キャッシュを捨てて、次の表示で作り直させる。
+// （試合ページ・成績ページのキャッシュは最長30分で自然に切れる）
+function clearSiteCache() {
+  const props = PropertiesService.getScriptProperties();
+  let all = {};
+  try { all = props.getProperties(); } catch (e) {}
+  let n = 0;
+  Object.keys(all).forEach(function (k) {
+    if (k.indexOf("gs:") === 0) { try { props.deleteProperty(k); n++; } catch (e) {} }
+  });
+  try { CacheService.getScriptCache().removeAll(["index", "music"]); } catch (e) {}
+  const msg = "試合要約 " + n + " 件と一覧キャッシュを削除しました";
+  Logger.log(msg);
+  return msg;
 }
 
 function rowObj(a) {
@@ -1380,14 +1428,13 @@ function renderIndex() {
 
   const names = gameSheetNames().reverse();
   if (names.length === 0 && !meta) body += '<p class="sub">まだ試合がありません。</p>';
+  const sums = gameSummaries(names); // 要約は永続キャッシュ済み（初回だけ各シートを読む）
   names.forEach(n => {
-    const rows = rowsOf(n);
-    if (rows.length === 0) return;
-    const l = lineScore(rows);
-    const tn = teamNames(rows);
+    const g = sums[n];
+    if (!g) return;
     body += '<a class="card" target="_top" href="' + url + '?view=game&sheet=' + encodeURIComponent(n) + '">' +
-      '<div class="d">' + esc(n) + '　' + esc(rows[0].stadium) + '</div>' +
-      '<div class="s">' + esc(tn.f) + ' ' + l.scoreF + ' - ' + l.scoreS + ' ' + esc(tn.s) + '</div></a>';
+      '<div class="d">' + esc(n) + '　' + esc(g.st) + '</div>' +
+      '<div class="s">' + esc(g.f) + ' ' + g.a + ' - ' + g.b + ' ' + esc(g.s) + '</div></a>';
   });
   return page("試合一覧", body, false);
 }
