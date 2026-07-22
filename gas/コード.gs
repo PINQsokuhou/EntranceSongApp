@@ -10,7 +10,7 @@
 const ALL_GAMES = "全試合経過";   // 全試合を積み上げるシート名
 const ROSTER_SHEET = "楽曲登録";  // メンバー・楽曲の一元管理シート（タブ名）
 // 楽曲登録を別ファイルに置く場合、そのスプレッドシートIDを入れる（"" なら同じファイル内）
-const ROSTER_SS_ID = "";
+const ROSTER_SS_ID = "1_7pMPpgLpNvroqfYcMRODo3t8S_OHVzP69nqMAzLbig";
 const LIVE_SHEET = "LIVE";        // 試合中のリアルタイム記録
 // 新しい月の「N月間成績」を作るときに複製するテンプレシート名。
 // A1に経過シート名を入れると全数式が追従する作りのシートを指定する。
@@ -498,7 +498,7 @@ function renderMusic() {
   }
   const v = sh.getDataRange().getValues();
 
-  let body = '<div class="top"><a href="' + url + '">← 一覧へ</a></div>' +
+  let body = '<div class="top"><a href="' + url + '?">← 一覧へ</a></div>' +
     '<h1>🎵 登場曲紹介</h1>';
 
   const members = [];
@@ -1217,7 +1217,7 @@ function renderStats(type, statId, period) {
     });
     return s + '</select>';
   }
-  let body = '<div class="top"><a target="_top" href="' + url + '">‹ 試合一覧</a></div>' +
+  let body = '<div class="top"><a target="_top" href="' + url + '?">‹ 試合一覧</a></div>' +
     '<h1>個人成績ランキング</h1>' +
     '<form method="get" action="' + url + '" target="_top" class="selrow">' +
     '<input type="hidden" name="view" value="stats">' +
@@ -1398,7 +1398,7 @@ function renderGame(name) {
   const meta = isLive ? liveMeta() : null;
   const url = ScriptApp.getService().getUrl();
   if (rows.length === 0 && !meta) {
-    return page("試合", '<p>データがありません。</p><a class="card" target="_top" href="' + url + '">← 一覧へ</a>', isLive);
+    return page("試合", '<p>データがありません。</p><a class="card" target="_top" href="' + url + '?">← 一覧へ</a>', isLive);
   }
   const date = rows[0] ? rows[0].date : meta.date;
   const stadium = rows[0] ? rows[0].stadium : meta.stadium;
@@ -1435,7 +1435,7 @@ function renderGame(name) {
     dateStr = isNaN(dt.getTime()) ? String(date)
       : dt.getFullYear() + "年" + (dt.getMonth()+1) + "月" + dt.getDate() + "日";
   }
-  let body = '<div class="top"><a target="_top" href="' + url + '">‹ 試合一覧</a></div>' +
+  let body = '<div class="top"><a target="_top" href="' + url + '?">‹ 試合一覧</a></div>' +
     '<h1>' + esc(dateStr) + ' ' + esc(stadium) + esc(gameNum) +
     (isLive ? '<span class="badge">試合中</span>' : '') + '</h1>';
   if (isLive) {
