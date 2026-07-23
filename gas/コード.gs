@@ -12,6 +12,7 @@ const ROSTER_SHEET = "楽曲登録";  // メンバー・楽曲の一元管理シ
 // 楽曲登録を別ファイルに置く場合、そのスプレッドシートIDを入れる（"" なら同じファイル内）
 const ROSTER_SS_ID = "1_7pMPpgLpNvroqfYcMRODo3t8S_OHVzP69nqMAzLbig";
 const LIVE_SHEET = "LIVE";        // 試合中のリアルタイム記録
+const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの本文を試合ごとに保存（複数端末で閲覧用）
 // 新しい月の「N月間成績」を作るときに複製するテンプレシート名。
 // A1に経過シート名を入れると全数式が追従する作りのシートを指定する。
 const SEISEKI_TEMPLATE = "シーズン通算成績";
@@ -74,6 +75,9 @@ function doGet(e) {
     });
   } else if (p.view === "music") {
     h = cached(cache, "music", 600, function () { return renderMusic(); });
+  } else if (p.view === "ts") {
+    // YouTube用タイムスタンプ（開いたときだけ専用シートを1行読む）
+    h = cached(cache, "ts:" + p.sheet, 1800, function () { return renderTs(p.sheet); });
   } else {
     // 試合一覧（全シートを読むので特にキャッシュが効く）
     h = cached(cache, "index", 60, function () { return renderIndex(); });
@@ -106,6 +110,7 @@ function doPost(e) {
     if (d.action === "liveUndo") return json(liveUndo());
     if (d.action === "liveEnd") return json(liveEnd());
     if (d.action === "liveState") return json(liveSetState(d));
+    if (d.action === "saveTs") return json(saveTsText(d.sheet, d.text));
     return json(saveGame(d)); // 試合終了時の本保存
   } catch (err) {
     return json({ ok: false, error: String(err) });
@@ -119,6 +124,7 @@ function recordAction(d) {
   if (d.action === "liveUndo") return liveUndo();
   if (d.action === "liveEnd") return liveEnd();
   if (d.action === "liveState") return liveSetState(d);
+  if (d.action === "saveTs") return saveTsText(d.sheet, d.text);
   return saveGame(d);
 }
 
@@ -154,10 +160,44 @@ function saveGame(d) {
   const monthly = ensureMonthlySheets(book, month);
   if (monthly) appendGame(monthly, d);
 
+  // YouTube用タイムスタンプ本文（ブラウザ版スコアブックが送ってくる）を保存
+  if (d.ytText) { try { saveTsText(name, d.ytText); } catch (e) {} }
+
   SpreadsheetApp.flush();
   // 一覧キャッシュを消して、終わった試合をすぐ反映
   try { CacheService.getScriptCache().remove("index"); } catch (e) {}
   return { ok: true, sheet: name, allGames: !!allSheet, monthly: monthly ? monthly.getName() : null };
+}
+
+// ---- YouTube用タイムスタンプ本文の保存/取得（試合ごと・複数端末で閲覧するため） ----
+// 専用シート「タイムスタンプ」に [試合シート名, 本文, 更新日時] を1試合1行で持つ。
+// このシートは ?view=ts を開いたときだけ読むので、試合一覧など他ページの速度には影響しない。
+function getTsText(name) {
+  const sh = ss().getSheetByName(TS_SHEET);
+  if (!sh || sh.getLastRow() < 2) return "";
+  const v = sh.getRange(1, 1, sh.getLastRow(), 2).getValues();
+  for (let r = 1; r < v.length; r++) {
+    if (String(v[r][0]) === String(name)) return String(v[r][1] || "");
+  }
+  return "";
+}
+function saveTsText(name, text) {
+  const book = ss();
+  let sh = book.getSheetByName(TS_SHEET);
+  if (!sh) {
+    sh = book.insertSheet(TS_SHEET, book.getNumSheets());
+    sh.getRange(1, 1, 1, 3).setValues([["試合シート名", "本文", "更新日時"]]);
+  }
+  const last = sh.getLastRow();
+  const keys = last >= 2 ? sh.getRange(2, 1, last - 1, 1).getValues() : [];
+  let row = -1;
+  for (let r = 0; r < keys.length; r++) {
+    if (String(keys[r][0]) === String(name)) { row = r + 2; break; }
+  }
+  if (row < 0) row = last + 1;
+  sh.getRange(row, 1, 1, 3).setValues([[name, text, new Date()]]);
+  try { CacheService.getScriptCache().remove("ts:" + name); } catch (e) {}
+  return { ok: true };
 }
 
 // その月の月間経過シートを返す。無ければ「N月試合経過」＋「N月間成績」を新規作成
@@ -1616,5 +1656,38 @@ function renderGame(name) {
   body += pitTable(tn.f, true);
   body += pitTable(tn.s, false);
 
+  // YouTube用タイムスタンプ（ブラウザ版スコアブックで記録した試合のみ。保存済みのときだけボタンを出す）
+  if (!isLive && getTsText(name)) {
+    body += '<a class="card" target="_top" href="' + url + '?view=ts&sheet=' + encodeURIComponent(name) + '">' +
+      '<div class="d">📋 YouTube用タイムスタンプ</div>' +
+      '<div style="font-size:.85em;color:#9fa3ad;margin-top:2px">概要欄に貼る時刻つきの一覧を開く</div></a>';
+  }
+
   return page(date + ' の試合', body, isLive);
+}
+
+// YouTube概要欄用タイムスタンプの閲覧ページ（どの端末からでも見られる・コピーできる）
+function renderTs(name) {
+  const url = ScriptApp.getService().getUrl();
+  const back = '<div class="top"><a target="_top" href="' + url + '?view=game&sheet=' +
+    encodeURIComponent(name) + '">‹ 試合へ戻る</a></div>';
+  const text = getTsText(name);
+  let body = back + '<h1>📋 YouTube用タイムスタンプ</h1>';
+  if (!text) {
+    body += '<p class="sub">この試合はタイムスタンプが保存されていません。' +
+      'ブラウザ版スコアブックで記録・保存した試合のみ表示されます。</p>';
+    return page("タイムスタンプ", body, false);
+  }
+  body += '<p class="sub">下の枠をタップ→「すべて選択」でコピーし、YouTubeの概要欄に貼り付けてください。</p>' +
+    '<button class="btn" id="tscopy" onclick="tsCopy()" ' +
+    'style="width:100%;border:none;border-radius:10px;padding:12px;font-weight:700;color:#fff;background:#2f6fdd;cursor:pointer">全文コピー</button>' +
+    '<textarea id="tstext" readonly onclick="this.select()" ' +
+    'style="width:100%;height:60vh;margin-top:10px;background:#0d0d10;color:#e9e9ec;border:1px solid #33343c;' +
+    'border-radius:10px;padding:12px;font-size:.86em;line-height:1.6">' + esc(text) + '</textarea>' +
+    '<script>function tsCopy(){var t=document.getElementById("tstext");' +
+    'var d=function(){var b=document.getElementById("tscopy");b.textContent="コピーしました";' +
+    'setTimeout(function(){b.textContent="全文コピー"},1800)};' +
+    'if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t.value).then(d,' +
+    'function(){t.select();document.execCommand("copy");d()})}else{t.select();document.execCommand("copy");d()}}<\/script>';
+  return page("タイムスタンプ", body, false);
 }

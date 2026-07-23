@@ -1040,25 +1040,29 @@ function endGame(){
     saves: stats.filter(function(s){ return s.save; }).map(function(s){ return s.name; })
   };
   var durMs = state.startedAt ? (Date.now() - state.startedAt) : 0;
+  // YouTube用タイムスタンプの元データ（端末にも直近3試合ぶん保存）
+  var ytGame = {
+    date: state.dateLabel, stadium: state.stadium,
+    scoreF: state.scoreFirst, scoreS: state.scoreSecond,
+    ms: durMs, tsOffsetSec: 0, serverSheet: '',
+    firstOrder: state.firstOrder.slice(), secondOrder: state.secondOrder.slice(),
+    logs: state.detailLogs.map(function(l){
+      return { inning: l.inning, topBottom: l.topBottom, batterName: l.batterName,
+        resultType: l.resultType, result: l.result, basesGained: l.basesGained,
+        runs: l.runs, rbi: l.rbi, situations: l.situations || [],
+        playResult: l.playResult, paStartSec: l.paStartSec || 0, resultPressSec: l.resultPressSec || 0 };
+    })
+  };
+  // サーバー（サイト）にもタイムスタンプ本文を保存 → 複数端末で閲覧できる
+  payload.ytText = ytBuild(ytGame);
   showToast('保存中…');
-  postJson(GAS_URL, payload).then(function(){
+  postJson(GAS_URL, payload).then(function(res){
     postLiveEnd();
     state.ended = true;
     state.finalStats = stats;
     state.durationMs = durMs;
-    // 試合時間とYouTube用タイムスタンプの元データを記録（直近3試合）
-    pushYtGame({
-      date: state.dateLabel, stadium: state.stadium,
-      scoreF: state.scoreFirst, scoreS: state.scoreSecond,
-      ms: durMs, tsOffsetSec: 0,
-      firstOrder: state.firstOrder.slice(), secondOrder: state.secondOrder.slice(),
-      logs: state.detailLogs.map(function(l){
-        return { inning: l.inning, topBottom: l.topBottom, batterName: l.batterName,
-          resultType: l.resultType, result: l.result, basesGained: l.basesGained,
-          runs: l.runs, rbi: l.rbi, situations: l.situations || [],
-          playResult: l.playResult, paStartSec: l.paStartSec || 0, resultPressSec: l.resultPressSec || 0 };
-      })
-    });
+    ytGame.serverSheet = (res && res.sheet) ? res.sheet : ''; // サイト更新用に試合シート名を控える
+    pushYtGame(ytGame);
     try { localStorage.removeItem('ppRecordState'); } catch (e) {}
     render();
     showToast('保存しました');
@@ -1421,11 +1425,24 @@ function renderYtModal(){
     '</div>' +
     '<textarea id="ytText" readonly style="width:100%;height:240px;background:#0d0d10;color:#e9e9ec;' +
     'border:1px solid #33343c;border-radius:10px;padding:10px;font-size:.82em;line-height:1.5">' + esc(text) + '</textarea>' +
+    (g.serverSheet
+      ? '<button class="btn green block" style="margin-top:8px" onclick="RB.ytSaveToSite()">サイトに保存（他の端末でも見られる）</button>' +
+        '<div class="sub">ズレ補正を変えたら、もう一度これを押すとサイトの内容も更新されます</div>'
+      : '<div class="sub">※ この試合は自動でサイト保存済みです（補正変更ぶんは反映されません）</div>') +
     '<div class="footbtns">' +
     '<button class="btn block" onclick="RB.ytCopy()">全文コピー</button>' +
     '<button class="btn outline block" onclick="RB.closeModal()">閉じる</button>' +
     '</div>' +
     '</div></div>';
+}
+function ytSaveToSite(){
+  var games = loadYtGames();
+  var g = games[modal.gameIndex];
+  if (!g || !g.serverSheet) { showToast('この試合はサイト保存に対応していません'); return; }
+  showToast('サイトに保存中…');
+  postJson(GAS_URL, { action: 'saveTs', sheet: g.serverSheet, text: ytBuild(g) })
+    .then(function(){ showToast('サイトに保存しました。どの端末からでも見られます'); })
+    .catch(function(err){ showToast('保存に失敗しました: ' + (err && err.message ? err.message : err)); });
 }
 function openYt(i){ modal = { type: 'yt', gameIndex: i }; renderModal(); }
 function ytOffset(delta){
@@ -1676,6 +1693,7 @@ var RB = {
   openYt: openYt,
   ytOffset: ytOffset,
   ytCopy: ytCopy,
+  ytSaveToSite: ytSaveToSite,
   openOrderEdit: function(){ openOrderEdit(); },
   orderEditTeam: function(t){ modal.team = t; renderModal(); },
   orderEditInsert: function(pos){
