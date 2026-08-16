@@ -106,6 +106,7 @@ border-top:1px solid #24252b}
 .btn.res-out{background:#C62828}
 .btn.res-outline{background:transparent;border:1px solid #4a4d57;color:#cfd2da}
 .btn.res-squeeze{background:#E65100}
+.btn.res-hold{background:#6b4fa0;height:48px}
 .subbtnrow{display:flex;gap:8px;margin:4px 0 14px}
 /* モーダル */
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;
@@ -641,6 +642,15 @@ function ytBuild(game){
   else hs.forEach(function(l){
     out.push(ytFormat(ytHighlightSec(l) + off) + ' ' + l.inning + '回' + l.topBottom + ' ' + l.batterName + ytLabel(l));
   });
+  // 要確認（ヒット/エラーが紛らわしく保留にした打席。押した10秒前に飛べる）
+  var holds = (game.logs || []).filter(function(l){ return l.hold; });
+  if (holds.length) {
+    out.push('');
+    out.push('要確認（ヒット/エラー協議）');
+    holds.forEach(function(l){
+      out.push(ytFormat(ytHighlightSec(l) + off) + ' ' + l.inning + '回' + l.topBottom + ' ' + l.batterName);
+    });
+  }
   out.push('');
   out.push('各選手の打席');
   function teamBlock(title, names){
@@ -917,7 +927,8 @@ function beginResult(type, opts){
     strikes: state.strikes,
     pitchCount: state.pitchCount,
     autoChange: autoChange,
-    pressMs: Date.now() // YouTubeタイムスタンプ用: 結果ボタン押下時刻
+    pressMs: Date.now(), // YouTubeタイムスタンプ用: 結果ボタン押下時刻
+    hold: !!opts.hold    // 保留（ヒット/エラー紛らわしい）→ 後で協議。記録上はヒットのまま
   };
   openResultPopup();
   saveState(); render();
@@ -971,6 +982,7 @@ function confirmResult(payload){
     nextOuts: willChange ? 0 : state.outs, nextBases: basesStrOf(state.bases),
     nextScoreFirst: state.scoreFirst, nextScoreSecond: state.scoreSecond,
     runs: payload.runs, rbi: payload.rbi,
+    hold: !!p.hold, // 保留フラグ（要確認タイムスタンプに出す。スプシの結果はヒットのまま）
     // YouTubeタイムスタンプ用（試合開始からの経過秒）
     paStartSec: (state.startedAt && state.paStartMs) ? Math.max(0, Math.floor((state.paStartMs - state.startedAt) / 1000)) : 0,
     resultPressSec: (state.startedAt && p.pressMs) ? Math.max(0, Math.floor((p.pressMs - state.startedAt) / 1000)) : 0
@@ -1049,7 +1061,7 @@ function endGame(){
     logs: state.detailLogs.map(function(l){
       return { inning: l.inning, topBottom: l.topBottom, batterName: l.batterName,
         resultType: l.resultType, result: l.result, basesGained: l.basesGained,
-        runs: l.runs, rbi: l.rbi, situations: l.situations || [],
+        runs: l.runs, rbi: l.rbi, situations: l.situations || [], hold: !!l.hold,
         playResult: l.playResult, paStartSec: l.paStartSec || 0, resultPressSec: l.resultPressSec || 0 };
     })
   };
@@ -1274,6 +1286,10 @@ function renderGame(){
       : '<span></span>') +
     '</div>';
 
+  // 保留: ヒットかエラーか紛らわしいとき。ヒットとして記録し、押した10秒前を「要確認」タイムスタンプに残す
+  h += '<div class="subbtnrow"><button class="btn res-hold block" ' + (disabled ? 'disabled' : '') +
+    ' onclick="RB.beginHold()">🕒 保留（ヒットで記録・後で協議）</button></div>';
+
   h += '<div class="row" style="margin-top:10px">' +
     '<button class="btn outline" style="flex:1" ' + (state.pending ? 'disabled' : '') + ' onclick="RB.openChangePitcher()">投手交代</button>' +
     '<button class="btn outline" style="flex:1" ' + (state.pending ? 'disabled' : '') + ' onclick="RB.openOrderEdit()">メンバー変更</button>' +
@@ -1286,7 +1302,8 @@ function renderGame(){
   if (state.detailLogs.length) {
     h += '<h2>直近の記録</h2><div class="card" style="padding:0">' +
       state.detailLogs.slice(-5).reverse().map(function(l){
-        return '<div class="statline"><span>' + l.inning + '回' + l.topBottom + ' ' + esc(l.batterName) + '</span>' +
+        return '<div class="statline"><span>' + l.inning + '回' + l.topBottom + ' ' + esc(l.batterName) +
+          (l.hold ? ' <span style="color:#e0a44a">🕒保留</span>' : '') + '</span>' +
           '<span>' + esc(resultCell(l)) + (l.runs ? '（+' + l.runs + '点）' : '') + '</span></div>';
       }).join('') + '</div>';
   }
@@ -1680,6 +1697,7 @@ var RB = {
   addBall: addBall, addStrike: addStrike, addFoul: addFoul,
   confirmStrikeoutChoice: confirmStrikeoutChoice, undoThirdStrike: undoThirdStrike,
   beginResult: beginResult, cancelResult: cancelResult,
+  beginHold: function(){ beginResult(RESULT_HIT, { hold: true }); },
   changeSides: changeSides,
   openChangePitcher: function(){
     var def = defendingTeam();
