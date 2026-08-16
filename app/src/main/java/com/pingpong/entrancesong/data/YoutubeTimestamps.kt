@@ -102,6 +102,19 @@ object YoutubeTimestamps {
             }
         }
 
+        // 要確認（ヒット/エラーが紛らわしく保留にした打席。押した10秒前に飛べる）
+        val holds = game.detailLogs.filter { it.hold }
+        if (holds.isNotEmpty()) {
+            sb.appendLine()
+            sb.appendLine("要確認（ヒット/エラー協議）")
+            holds.forEach { log ->
+                sb.appendLine(
+                    "${format(highlightSec(log) + off)} " +
+                            "${log.inning}回${log.topBottom} ${log.batterName}"
+                )
+            }
+        }
+
         sb.appendLine()
         sb.appendLine("各選手の打席")
 

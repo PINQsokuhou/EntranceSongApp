@@ -220,6 +220,13 @@ fun MainScreen(modifier: Modifier = Modifier) {
                     Spacer(Modifier.weight(1f))
                 }
             }
+            Spacer(Modifier.height(6.dp))
+            // 保留: ヒット/エラーが紛らわしいとき。ヒットとして記録し、押した10秒前を「要確認」タイムスタンプに残す
+            Button(
+                onClick = { GameEngine.beginResult(Scorebook.RESULT_HIT, hold = true) },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6B4FA0)),
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("🕒 保留（ヒットで記録・後で協議）", fontSize = 13.sp) }
             Spacer(Modifier.height(8.dp))
         }
 

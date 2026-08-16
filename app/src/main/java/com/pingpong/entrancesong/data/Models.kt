@@ -77,6 +77,8 @@ data class PendingResult(
     val paStartSec: Long,
     /** 結果ボタンが押された瞬間の試合タイマー値 */
     val resultPressSec: Long,
+    /** 保留（ヒット/エラーが紛らわしい）。記録上はヒットのまま、後で協議して修正する */
+    val hold: Boolean = false,
     /** この結果で自動的にチェンジになるか（アウト/三振で3アウト目） */
     val autoChange: Boolean,
     /** 結果押下時に曲を流した次打者の memberId（確定時に打順を進める対象） */
@@ -117,6 +119,8 @@ data class AtBatLog(
     val batType: String? = null,
     /** 個別状況（併殺、タッチアップ、ワンファンブル、スクイズ成否 など） */
     val situations: List<String> = emptyList(),
+    /** 保留フラグ。ヒットとして記録しつつ「要確認」タイムスタンプに残す（スプシの結果はヒットのまま） */
+    val hold: Boolean = false,
     /** 塁打数（打者走者が進んだ塁数） */
     val basesGained: Int = 0,
     /** 失策数 */

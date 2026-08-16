@@ -469,7 +469,7 @@ object GameEngine {
      * 結果ボタン押下。次打者（3アウト目確定なら相手チームの先頭）の曲を即時再生し、
      * 詳細入力待ち（pending）に入る。ステートの前進は confirmResult まで行わない。
      */
-    fun beginResult(type: String, playSong: Boolean = true, snapshot: Boolean = true) {
+    fun beginResult(type: String, playSong: Boolean = true, snapshot: Boolean = true, hold: Boolean = false) {
         if (!state.started || state.pending != null) return
         val batter = currentBatter() ?: return
         if (snapshot) pushUndo()
@@ -546,6 +546,7 @@ object GameEngine {
             pitchCount = state.pitchCount,
             paStartSec = state.paStartSec,
             resultPressSec = press,
+            hold = hold,
             autoChange = autoChange,
             nextBatterId = nextId
         )
@@ -660,6 +661,7 @@ object GameEngine {
                 ballType = ballType,
                 batType = batType,
                 situations = situations,
+                hold = p.hold,
                 basesGained = basesGained,
                 errors = errors,
                 nextInning = state.inning,

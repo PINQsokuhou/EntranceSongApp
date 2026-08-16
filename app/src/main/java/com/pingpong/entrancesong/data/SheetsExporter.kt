@@ -39,7 +39,9 @@ object SheetsExporter {
         val loss: String,
         /** AK ホールド / AL セーブ */
         val holds: List<String>,
-        val saves: List<String>
+        val saves: List<String>,
+        /** YouTube用タイムスタンプ本文（サーバーに保存し複数端末で閲覧。古いサーバーは無視するだけ） */
+        val ytText: String = ""
     )
 
     private val json = Json { encodeDefaults = true }
@@ -114,7 +116,8 @@ object SheetsExporter {
             win = stats.firstOrNull { it.win }?.name ?: "",
             loss = stats.firstOrNull { it.loss }?.name ?: "",
             holds = stats.filter { it.hold }.map { it.name },
-            saves = stats.filter { it.save }.map { it.name }
+            saves = stats.filter { it.save }.map { it.name },
+            ytText = YoutubeTimestamps.build(game)
         )
     }
 
