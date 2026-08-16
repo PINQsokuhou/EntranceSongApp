@@ -18,7 +18,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v22";
+const SITE_VER = "site v23";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -76,8 +76,14 @@ function doGet(e) {
   } else if (p.view === "music") {
     h = cached(cache, "music", 600, function () { return renderMusic(); });
   } else if (p.view === "ts") {
-    // YouTube用タイムスタンプ（開いたときだけ専用シートを1行読む）
-    h = cached(cache, "ts:" + p.sheet, 1800, function () { return renderTs(p.sheet); });
+    if (p.dir) {
+      // サイト上でのズレ補正: 分秒ぶん全時刻をずらして保存し、最新を表示（キャッシュしない）
+      var sec = (parseInt(p.mm, 10) || 0) * 60 + (parseInt(p.ss, 10) || 0);
+      h = renderTsShift(p.sheet, p.dir === "minus" ? -sec : sec);
+    } else {
+      // 開いたときだけ専用シートを1行読む
+      h = cached(cache, "ts:" + p.sheet, 1800, function () { return renderTs(p.sheet); });
+    }
   } else {
     // 試合一覧（全シートを読むので特にキャッシュが効く）
     h = cached(cache, "index", 60, function () { return renderIndex(); });
@@ -1667,6 +1673,33 @@ function renderGame(name) {
 }
 
 // YouTube概要欄用タイムスタンプの閲覧ページ（どの端末からでも見られる・コピーできる）
+// タイムスタンプ本文の各行頭の時刻（M:SS / H:MM:SS）を deltaSec ぶんずらす（下限0）
+function shiftTsText(text, deltaSec) {
+  if (!deltaSec) return text;
+  function fmt(s) {
+    s = Math.max(0, s);
+    var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), ss = s % 60;
+    function p(n) { return (n < 10 ? "0" : "") + n; }
+    return h > 0 ? h + ":" + p(m) + ":" + p(ss) : m + ":" + p(ss);
+  }
+  return text.split("\n").map(function (line) {
+    // 行頭が "H:MM:SS " または "M:SS " で始まる行だけ時刻を補正
+    var m = line.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?(\s)/);
+    if (!m) return line;
+    var sec = (m[3] != null)
+      ? (parseInt(m[1], 10) * 3600 + parseInt(m[2], 10) * 60 + parseInt(m[3], 10))
+      : (parseInt(m[1], 10) * 60 + parseInt(m[2], 10));
+    return fmt(sec + deltaSec) + m[4] + line.slice(m[0].length);
+  }).join("\n");
+}
+
+// サイト上でのズレ補正を保存してから表示
+function renderTsShift(name, deltaSec) {
+  var text = getTsText(name);
+  if (text && deltaSec) { saveTsText(name, shiftTsText(text, deltaSec)); }
+  return renderTs(name);
+}
+
 function renderTs(name) {
   const url = ScriptApp.getService().getUrl();
   const back = '<div class="top"><a target="_top" href="' + url + '?view=game&sheet=' +
@@ -1678,6 +1711,19 @@ function renderTs(name) {
       'ブラウザ版スコアブックで記録・保存した試合のみ表示されます。</p>';
     return page("タイムスタンプ", body, false);
   }
+  // ズレ補正フォーム（全時刻を＋遅らせる / −早める。GETフォームなのでラッパー経由でも動く）
+  body += '<div class="card"><div class="d">⏱ ズレ補正（動画と時刻を合わせる）</div>' +
+    '<div class="sub" style="margin:4px 0 8px">動画内で試合開始が 0:00 より後なら「＋遅らせる」、前なら「−早める」。全時刻をまとめてずらします。</div>' +
+    '<form method="get" action="' + url + '" target="_top" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
+    '<input type="hidden" name="view" value="ts">' +
+    '<input type="hidden" name="sheet" value="' + esc(name) + '">' +
+    '<input name="mm" type="number" value="0" min="0" style="width:4.5em" aria-label="分"> 分' +
+    '<input name="ss" type="number" value="0" min="0" max="59" style="width:4.5em" aria-label="秒"> 秒' +
+    '<button name="dir" value="plus" class="tsbtn">＋ 遅らせる</button>' +
+    '<button name="dir" value="minus" class="tsbtn">− 早める</button>' +
+    '</form>' +
+    '<style>.tsbtn{border:none;border-radius:8px;padding:9px 12px;font-weight:700;color:#fff;' +
+    'background:#3a3d46;cursor:pointer;font-size:.9em}</style></div>';
   body += '<p class="sub">下の枠をタップ→「すべて選択」でコピーし、YouTubeの概要欄に貼り付けてください。</p>' +
     '<button class="btn" id="tscopy" onclick="tsCopy()" ' +
     'style="width:100%;border:none;border-radius:10px;padding:12px;font-weight:700;color:#fff;background:#2f6fdd;cursor:pointer">全文コピー</button>' +
@@ -1688,6 +1734,8 @@ function renderTs(name) {
     'var d=function(){var b=document.getElementById("tscopy");b.textContent="コピーしました";' +
     'setTimeout(function(){b.textContent="全文コピー"},1800)};' +
     'if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t.value).then(d,' +
-    'function(){t.select();document.execCommand("copy");d()})}else{t.select();document.execCommand("copy");d()}}<\/script>';
+    'function(){t.select();document.execCommand("copy");d()})}else{t.select();document.execCommand("copy");d()}}' +
+    // 補正適用後の再読み込みで二重補正にならないよう、URLから mm/ss/dir を消す
+    'try{history.replaceState(null,"","?view=ts&sheet=' + encodeURIComponent(name) + '")}catch(e){}<\/script>';
   return page("タイムスタンプ", body, false);
 }
