@@ -18,7 +18,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v28";
+const SITE_VER = "site v29";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -529,13 +529,14 @@ function rowsOf(name, book) {
   if (!sh || sh.getLastRow() < 2) return [];
   // 打席記録は A〜AB(28列)だけ。getDataRange() だと右側の投手成績ブロック(AD列〜)まで
   // 読んでしまい、全試合経過のような大きいシートで無駄に遅くなる
+  const L = layoutOf(book || ss());
   const cols = Math.min(28, Math.max(1, sh.getMaxColumns()));
   const v = sh.getRange(1, 1, sh.getLastRow(), cols).getValues();
   const rows = [];
   for (let r = 1; r < v.length; r++) {
     if (!v[r][0] && v[r][0] !== 0) continue;
-    if (String(v[r][8] || "") === "") continue; // 打者名が無い行は打席行でない
-    rows.push(rowObj(v[r]));
+    if (String(v[r][L.batter] || "") === "") continue; // 打者名が無い行は打席行でない
+    rows.push(rowObj(v[r], L));
   }
   return rows;
 }
@@ -585,16 +586,43 @@ function clearSiteCache() {
   return msg;
 }
 
-function rowObj(a) {
+// 全試合経過の列レイアウト（0始まりの列番号）。過去シーズンは球場・打左右・投左右・バット種類が無く左にズレる
+const LAYOUT_NEW = { stadium:1, inning:2, tb:3, outs:4, bases:5, batter:8, pitcher:10,
+  pitches:12, result:14, tbases:18, errs:19, nInning:20, nTb:21, nOuts:22, nSf:24, nSs:25,
+  runs:26, rbi:27, pblockName:30 };
+const LAYOUT_OLD = { stadium:-1, inning:1, tb:2, outs:3, bases:4, batter:7, pitcher:8,
+  pitches:9, result:11, tbases:14, errs:15, nInning:16, nTb:17, nOuts:18, nSf:20, nSs:21,
+  runs:22, rbi:23, pblockName:26 };
+var _layoutCache = {};
+// スプレッドシートの形式を「全試合経過」B1見出しで判別（球場=新, 回=旧）。ブック単位でキャッシュ
+function layoutOf(book) {
+  const id = (book || ss()).getId();
+  if (_layoutCache[id]) return _layoutCache[id];
+  let L = LAYOUT_NEW;
+  try {
+    const sh = (book || ss()).getSheetByName(ALL_GAMES);
+    if (sh) {
+      const b1 = String(sh.getRange(1, 2).getValue()).trim();
+      if (b1 === "回") L = LAYOUT_OLD;
+    }
+  } catch (e) {}
+  _layoutCache[id] = L;
+  return L;
+}
+
+function rowObj(a, L) {
+  L = L || LAYOUT_NEW;
+  function s(i) { return i >= 0 ? String(a[i] || "") : ""; }
+  function n(i) { return i >= 0 ? (+a[i] || 0) : 0; }
   return {
-    date: String(a[0]), stadium: String(a[1] || ""),
-    inning: +a[2] || 0, tb: String(a[3] || ""), outs: +a[4] || 0, bases: String(a[5] || ""),
-    batter: String(a[8] || ""), pitcher: String(a[10] || ""),
-    pitches: +a[12] || 0, result: String(a[14] || ""),
-    tbases: +a[18] || 0, errs: +a[19] || 0,
-    nInning: +a[20] || 0, nTb: String(a[21] || ""), nOuts: +a[22] || 0,
-    nSf: +a[24] || 0, nSs: +a[25] || 0,
-    runs: +a[26] || 0, rbi: +a[27] || 0
+    date: String(a[0]), stadium: s(L.stadium),
+    inning: n(L.inning), tb: s(L.tb), outs: n(L.outs), bases: s(L.bases),
+    batter: s(L.batter), pitcher: s(L.pitcher),
+    pitches: n(L.pitches), result: s(L.result),
+    tbases: n(L.tbases), errs: n(L.errs),
+    nInning: n(L.nInning), nTb: s(L.nTb), nOuts: n(L.nOuts),
+    nSf: n(L.nSf), nSs: n(L.nSs),
+    runs: n(L.runs), rbi: n(L.rbi)
   };
 }
 
@@ -602,21 +630,22 @@ function rowObj(a) {
 function pblockOf(name) {
   const sh = ss().getSheetByName(name);
   if (!sh) return null;
+  const PB = layoutOf(ss()).pblockName; // 投手名の列（新=30 / 旧=26）
   const v = sh.getDataRange().getValues();
   const out = { pitchers: {}, starters: [], win: "", loss: "", holds: [], saves: [] };
   for (let r = 1; r < v.length; r++) {
-    if (v[r].length < PBLOCK_COL + 8) continue;
-    const pn = String(v[r][PBLOCK_COL] || "");        // AE 投手名
-    if (pn) out.pitchers[pn] = { runs: +v[r][PBLOCK_COL + 1] || 0, er: +v[r][PBLOCK_COL + 2] || 0 };
-    const st = String(v[r][PBLOCK_COL + 3] || "");    // AH 先発
+    if (v[r].length < PB + 8) continue;
+    const pn = String(v[r][PB] || "");        // 投手名
+    if (pn) out.pitchers[pn] = { runs: +v[r][PB + 1] || 0, er: +v[r][PB + 2] || 0 };
+    const st = String(v[r][PB + 3] || "");    // 先発
     if (st) out.starters.push(st);
     if (r === 1) {
-      out.win = String(v[r][PBLOCK_COL + 4] || "");   // AI 勝
-      out.loss = String(v[r][PBLOCK_COL + 5] || "");  // AJ 敗
+      out.win = String(v[r][PB + 4] || "");   // 勝
+      out.loss = String(v[r][PB + 5] || "");  // 敗
     }
-    const h = String(v[r][PBLOCK_COL + 6] || "");
+    const h = String(v[r][PB + 6] || "");
     if (h) out.holds.push(h);
-    const sv = String(v[r][PBLOCK_COL + 7] || "");
+    const sv = String(v[r][PB + 7] || "");
     if (sv) out.saves.push(sv);
   }
   return out;
@@ -643,12 +672,13 @@ function seasonPitcherRecords(uptoDate) {
     if (!rec[n]) rec[n] = { w: 0, l: 0, h: 0, s: 0 };
     rec[n][key]++;
   }
+  const PB = layoutOf(ss()).pblockName;
   for (let r = 1; r < end; r++) {
-    if (v[r].length < PBLOCK_COL + 8) continue;
-    add(v[r][PBLOCK_COL + 4], "w"); // AI 勝
-    add(v[r][PBLOCK_COL + 5], "l"); // AJ 敗
-    add(v[r][PBLOCK_COL + 6], "h"); // AK ホールド
-    add(v[r][PBLOCK_COL + 7], "s"); // AL セーブ
+    if (v[r].length < PB + 8) continue;
+    add(v[r][PB + 4], "w"); // 勝
+    add(v[r][PB + 5], "l"); // 敗
+    add(v[r][PB + 6], "h"); // ホールド
+    add(v[r][PB + 7], "s"); // セーブ
   }
   return rec;
 }
@@ -1255,22 +1285,24 @@ function pitAllFrom(rows, blockSheet, book) {
     if (r.result === "四球") p.bb++;
     if (r.result === "死球") p.hbp++;
   });
-  // 失点・自責・勝敗HSは投手成績ブロック（AE〜AL列）から
-  const sh = (book || ss()).getSheetByName(blockSheet);
+  // 失点・自責・勝敗HSは投手成績ブロックから（投手名の列は新=30 / 旧=26）
+  const bk = book || ss();
+  const sh = bk.getSheetByName(blockSheet);
   if (sh) {
+    const PB = layoutOf(bk).pblockName;
     const v = sh.getDataRange().getValues();
     for (let r = 1; r < v.length; r++) {
-      if (v[r].length < PBLOCK_COL + 8) continue;
-      const pn = String(v[r][PBLOCK_COL] || "").trim();
+      if (v[r].length < PB + 8) continue;
+      const pn = String(v[r][PB] || "").trim();
       if (pn) {
         const p = ent(pn);
-        p.runs += +v[r][PBLOCK_COL + 1] || 0;
-        p.er += +v[r][PBLOCK_COL + 2] || 0;
+        p.runs += +v[r][PB + 1] || 0;
+        p.er += +v[r][PB + 2] || 0;
       }
-      const w = String(v[r][PBLOCK_COL + 4] || "").trim(); if (w) ent(w).w++;
-      const l = String(v[r][PBLOCK_COL + 5] || "").trim(); if (l) ent(l).l++;
-      const h = String(v[r][PBLOCK_COL + 6] || "").trim(); if (h) ent(h).hld++;
-      const s = String(v[r][PBLOCK_COL + 7] || "").trim(); if (s) ent(s).sv++;
+      const w = String(v[r][PB + 4] || "").trim(); if (w) ent(w).w++;
+      const l = String(v[r][PB + 5] || "").trim(); if (l) ent(l).l++;
+      const h = String(v[r][PB + 6] || "").trim(); if (h) ent(h).hld++;
+      const s = String(v[r][PB + 7] || "").trim(); if (s) ent(s).sv++;
     }
   }
   return m;
@@ -1415,10 +1447,16 @@ function splitGames(rows) {
 
 // 経過シート名に対応する成績シート（〜成績。A1に集計元の経過シート名が入っている）を返す
 function seisekiSheetFor(keikaName) {
-  const sheets = ss().getSheets();
+  const book = ss();
+  const sheets = book.getSheets();
+  // 現行: 成績シートのA1に集計元の経過シート名が入っている
   for (let i = 0; i < sheets.length; i++) {
     if (!/成績$/.test(sheets[i].getName())) continue;
     if (String(sheets[i].getRange("A1").getValue()) === keikaName) return sheets[i];
+  }
+  // 過去シーズン: A1が一致しない。全期間なら「全指標」または「シーズン通算成績」を使う
+  if (keikaName === ALL_GAMES) {
+    return book.getSheetByName("全指標") || book.getSheetByName("シーズン通算成績") || null;
   }
   return null;
 }
