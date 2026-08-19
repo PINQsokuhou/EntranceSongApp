@@ -18,7 +18,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v32";
+const SITE_VER = "site v33";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -214,6 +214,93 @@ function bookById(id) {
 }
 // すべての読み書きの入口。選択中シーズン（既定=現行）のスプレッドシートを返す
 function ss() { return bookById(activeSeasonId()); }
+
+// ---------------- 選手名の正規化（表記ゆれ・フルネームの統一） ----------------
+// 別名はロースター（楽曲登録）のスプレッドシートの「選手別名」シートで管理する:
+//   A: 正式名   B: 別名（この名前を見つけたら正式名に読み替える）
+// 例) 冨髙 / 冨高、谷遼 / 谷。行を足すだけで今後の表記ゆれにも対応できる。
+const ALIAS_SHEET = "選手別名";
+var _aliasMap = null;   // 別名 -> 正式名
+var _knownNames = null; // 正式名の集合（名簿のA列）
+
+function aliasMap() {
+  if (_aliasMap) return _aliasMap;
+  const cache = CacheService.getScriptCache();
+  const hit = cache.get("aliasMap");
+  if (hit) { try { _aliasMap = JSON.parse(hit); return _aliasMap; } catch (e) {} }
+  const m = {};
+  try {
+    const sh = rosterBook().getSheetByName(ALIAS_SHEET);
+    if (sh && sh.getLastRow() >= 2) {
+      const v = sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues();
+      v.forEach(function (r) {
+        const official = stripSpace(r[0]);
+        const alias = stripSpace(r[1]);
+        if (official && alias) m[alias] = official;
+      });
+    }
+  } catch (e) {}
+  _aliasMap = m;
+  try { cache.put("aliasMap", JSON.stringify(m), 600); } catch (e) {}
+  return m;
+}
+
+// 名簿（楽曲登録シート）のA列 = 正式名の一覧
+function knownNames() {
+  if (_knownNames) return _knownNames;
+  const cache = CacheService.getScriptCache();
+  const hit = cache.get("knownNames");
+  if (hit) { try { _knownNames = JSON.parse(hit); return _knownNames; } catch (e) {} }
+  const k = {};
+  try {
+    const sh = rosterBook().getSheetByName(ROSTER_SHEET);
+    if (sh && sh.getLastRow() >= 2) {
+      const v = sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues();
+      v.forEach(function (r) { const n = stripSpace(r[0]); if (n) k[n] = 1; });
+    }
+  } catch (e) {}
+  _knownNames = k;
+  try { cache.put("knownNames", JSON.stringify(k), 600); } catch (e) {}
+  return k;
+}
+
+function stripSpace(s) {
+  return String(s == null ? "" : s).replace(/[\s　]+/g, "").trim();
+}
+
+// 選手名の正規化。空白除去 → 別名表 → フルネームなら既知の苗字に丸める
+function normName(raw) {
+  const s = stripSpace(raw);
+  if (!s) return "";
+  const A = aliasMap();
+  if (A[s]) return A[s];
+  const K = knownNames();
+  if (K[s]) return s; // すでに正式名
+  // 「橋本大輝」のようなフルネームは、名簿にある苗字（2文字以上）に丸める
+  if (s.length >= 3) {
+    let best = "";
+    for (const k in K) {
+      if (k.length >= 2 && s.indexOf(k) === 0 && k.length > best.length) best = k;
+    }
+    if (best) return best;
+  }
+  return s;
+}
+
+// 一度だけ実行: ロースターのスプレッドシートに「選手別名」シートを作る
+function setupAliasSheet() {
+  const book = rosterBook();
+  let sh = book.getSheetByName(ALIAS_SHEET);
+  if (!sh) sh = book.insertSheet(ALIAS_SHEET);
+  if (sh.getLastRow() < 1) {
+    sh.getRange(1, 1, 1, 2).setValues([["正式名", "別名"]]);
+  }
+  if (sh.getLastRow() < 2) {
+    sh.getRange(2, 1, 2, 2).setValues([["冨髙", "冨高"], ["谷遼", "谷"]]);
+  }
+  try { CacheService.getScriptCache().removeAll(["aliasMap", "knownNames"]); } catch (e) {}
+  return "「" + ALIAS_SHEET + "」シートを用意しました。行を足せば表記ゆれを統一できます。";
+}
 
 // 一度だけ実行: ロースターのスプレッドシートに「シーズン」シートを作り、現行シーズンを1行入れる
 function setupSeasonSheet() {
@@ -582,8 +669,10 @@ function clearSiteCache() {
   Object.keys(all).forEach(function (k) {
     if (k.indexOf("gs:") === 0) { try { props.deleteProperty(k); n++; } catch (e) {} }
   });
-  try { CacheService.getScriptCache().removeAll(["index", "music", "seasonList"]); } catch (e) {}
-  const msg = "試合要約 " + n + " 件と一覧キャッシュ・シーズン一覧を削除しました";
+  try {
+    CacheService.getScriptCache().removeAll(["index", "music", "seasonList", "aliasMap", "knownNames"]);
+  } catch (e) {}
+  const msg = "試合要約 " + n + " 件と一覧キャッシュ・シーズン一覧・名前対応表を削除しました";
   Logger.log(msg);
   return msg;
 }
@@ -621,7 +710,8 @@ function rowObj(a, L) {
   return {
     date: String(a[0]), stadium: s(L.stadium),
     inning: n(L.inning), tb: s(L.tb), outs: n(L.outs), bases: s(L.bases),
-    batter: s(L.batter), pitcher: s(L.pitcher),
+    // 選手名はシーズンごとの表記ゆれ（冨高/冨髙、フルネーム等）を正規化して揃える
+    batter: normName(s(L.batter)), pitcher: normName(s(L.pitcher)),
     pitches: n(L.pitches), result: s(L.result),
     tbases: n(L.tbases), errs: n(L.errs),
     nInning: n(L.nInning), nTb: s(L.nTb), nOuts: n(L.nOuts),
@@ -639,17 +729,17 @@ function pblockOf(name) {
   const out = { pitchers: {}, starters: [], win: "", loss: "", holds: [], saves: [] };
   for (let r = 1; r < v.length; r++) {
     if (v[r].length < PB + 8) continue;
-    const pn = String(v[r][PB] || "");        // 投手名
+    const pn = normName(v[r][PB]);            // 投手名
     if (pn) out.pitchers[pn] = { runs: +v[r][PB + 1] || 0, er: +v[r][PB + 2] || 0 };
-    const st = String(v[r][PB + 3] || "");    // 先発
+    const st = normName(v[r][PB + 3]);        // 先発
     if (st) out.starters.push(st);
     if (r === 1) {
-      out.win = String(v[r][PB + 4] || "");   // 勝
-      out.loss = String(v[r][PB + 5] || "");  // 敗
+      out.win = normName(v[r][PB + 4]);       // 勝
+      out.loss = normName(v[r][PB + 5]);      // 敗
     }
-    const h = String(v[r][PB + 6] || "");
+    const h = normName(v[r][PB + 6]);
     if (h) out.holds.push(h);
-    const sv = String(v[r][PB + 7] || "");
+    const sv = normName(v[r][PB + 7]);
     if (sv) out.saves.push(sv);
   }
   return out;
@@ -671,7 +761,7 @@ function seasonPitcherRecords(uptoDate) {
     if (last >= 0) end = last + 1;
   }
   function add(name, key) {
-    const n = String(name || "").trim();
+    const n = normName(name);
     if (!n) return;
     if (!rec[n]) rec[n] = { w: 0, l: 0, h: 0, s: 0 };
     rec[n][key]++;
@@ -1297,16 +1387,16 @@ function pitAllFrom(rows, blockSheet, book) {
     const v = sh.getDataRange().getValues();
     for (let r = 1; r < v.length; r++) {
       if (v[r].length < PB + 8) continue;
-      const pn = String(v[r][PB] || "").trim();
+      const pn = normName(v[r][PB]);
       if (pn) {
         const p = ent(pn);
         p.runs += +v[r][PB + 1] || 0;
         p.er += +v[r][PB + 2] || 0;
       }
-      const w = String(v[r][PB + 4] || "").trim(); if (w) ent(w).w++;
-      const l = String(v[r][PB + 5] || "").trim(); if (l) ent(l).l++;
-      const h = String(v[r][PB + 6] || "").trim(); if (h) ent(h).hld++;
-      const s = String(v[r][PB + 7] || "").trim(); if (s) ent(s).sv++;
+      const w = normName(v[r][PB + 4]); if (w) ent(w).w++;
+      const l = normName(v[r][PB + 5]); if (l) ent(l).l++;
+      const h = normName(v[r][PB + 6]); if (h) ent(h).hld++;
+      const s = normName(v[r][PB + 7]); if (s) ent(s).sv++;
     }
   }
   return m;
@@ -1669,7 +1759,8 @@ function careerPitDefs() {
 
 function renderPlayer(nameRaw, period) {
   const url = ScriptApp.getService().getUrl();
-  const name = (nameRaw || "").toString();
+  // 古い表記のリンク（冨高など）で来ても正式名のページを開けるように正規化する
+  const name = normName(nameRaw);
   // 期間（統一セレクタ: 今シーズン通算/今シーズンn月/全シーズン通算/過去シーズン）
   const rp = resolvePeriodValue(period);
   const isCareer = rp.sheet === CAREER_PERIOD;
@@ -1712,15 +1803,16 @@ function renderPlayer(nameRaw, period) {
     const sv = seiseki.getDataRange().getValues();
     const headers = sv[0];
     let prow = null;
+    // 成績シート側もフルネーム等の表記ゆれがあるので正規化して突き合わせる
     for (let r = 1; r < sv.length; r++) {
-      if (String(sv[r][0]).trim() === name) { prow = sv[r]; break; }
+      if (normName(sv[r][0]) === name) { prow = sv[r]; break; }
     }
     if (prow) {
       found = true;
       // 投手ブロックの名前列（col0以外で値が選手名と一致する最初の列）を打撃/投手の境界にする
       let j = -1;
       for (let c = 1; c < prow.length; c++) {
-        if (String(prow[c]).trim() === name) { j = c; break; }
+        if (normName(prow[c]) === name) { j = c; break; }
       }
       const batTo = (j > 1) ? j - 1 : prow.length - 1;
       body += '<h2>打撃成績（全指標）</h2>' + seisekiTable(headers, prow, 1, batTo);
