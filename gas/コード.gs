@@ -18,7 +18,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v33";
+const SITE_VER = "site v34";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -61,7 +61,7 @@ function doGet(e) {
   if (p.view === "record") return htmlOut(renderRecord());
 
   // シーズン選択（?season=ID）。登録済みで現行以外のIDのときだけアーカイブ表示に切り替える
-  if (p.season && seasonList().some(function (s) { return s.id === p.season && !s.current; })) {
+  if (p.season && playableSeasons().some(function (s) { return s.id === p.season && !s.current; })) {
     _seasonId = p.season;
   }
   // 成績・選手ページは期間セレクタ（"s:<ID>"）でもシーズンを切り替える
@@ -172,13 +172,13 @@ function rosterBook() {
 // シーズン一覧 [{label,id,current}]。登録が無ければ現行（=バインド先）のみ。10分キャッシュ
 function seasonList() {
   const cache = CacheService.getScriptCache();
-  const hit = cache.get("seasonList");
+  const hit = cache.get("seasonList2");
   if (hit) { try { return JSON.parse(hit); } catch (e) {} }
   let out = [];
   try {
     const sh = rosterBook().getSheetByName(SEASON_SHEET);
     if (sh && sh.getLastRow() >= 2) {
-      const v = sh.getRange(2, 1, sh.getLastRow() - 1, 3).getValues();
+      const v = sh.getRange(2, 1, sh.getLastRow() - 1, 4).getValues();
       v.forEach(function (r) {
         const label = String(r[0] || "").trim();
         const url = String(r[1] || "").trim();
@@ -186,14 +186,23 @@ function seasonList() {
         const id = fileId(url) || url;
         const c = r[2];
         const cur = c === true || /^(true|○|◯|現行|current)$/i.test(String(c).trim());
-        out.push({ label: label, id: id, current: cur });
+        // D列に成績シート名があれば「成績のみシーズン」。試合データが無く、通算にだけ加算する
+        const statsSheet = String(r[3] || "").trim();
+        out.push({ label: label, id: id, current: cur, statsSheet: statsSheet });
       });
     }
   } catch (e) { out = []; }
-  if (out.length === 0) out = [{ label: "今シーズン", id: boundBook().getId(), current: true }];
-  else if (!out.some(function (s) { return s.current; })) out[0].current = true;
-  try { cache.put("seasonList", JSON.stringify(out), 600); } catch (e) {}
+  if (out.length === 0) out = [{ label: "今シーズン", id: boundBook().getId(), current: true, statsSheet: "" }];
+  else if (!out.some(function (s) { return s.current; })) {
+    const firstNormal = out.filter(function (s) { return !s.statsSheet; })[0];
+    (firstNormal || out[0]).current = true;
+  }
+  try { cache.put("seasonList2", JSON.stringify(out), 600); } catch (e) {}
   return out;
+}
+// 試合データを持つシーズン（試合一覧・シーズン切り替えに出すもの）
+function playableSeasons() {
+  return seasonList().filter(function (s) { return !s.statsSheet; });
 }
 function currentSeasonId() {
   const c = seasonList().filter(function (s) { return s.current; })[0];
@@ -308,13 +317,14 @@ function setupSeasonSheet() {
   let sh = book.getSheetByName(SEASON_SHEET);
   if (!sh) sh = book.insertSheet(SEASON_SHEET);
   if (sh.getLastRow() < 1) {
-    sh.getRange(1, 1, 1, 3).setValues([["シーズン名", "スプレッドシートURL", "現行"]]);
+    // D列（成績シート名）を入れた行は「成績のみの年度」＝通算にだけ加算し、試合一覧には出さない
+    sh.getRange(1, 1, 1, 4).setValues([["シーズン名", "スプレッドシートURL", "現行", "成績シート名（成績のみの年度）"]]);
   }
   if (sh.getLastRow() < 2) {
     const url = "https://docs.google.com/spreadsheets/d/" + boundBook().getId() + "/edit";
-    sh.getRange(2, 1, 1, 3).setValues([["今シーズン", url, true]]);
+    sh.getRange(2, 1, 1, 4).setValues([["今シーズン", url, true, ""]]);
   }
-  try { CacheService.getScriptCache().remove("seasonList"); } catch (e) {}
+  try { CacheService.getScriptCache().remove("seasonList2"); } catch (e) {}
   return "「" + SEASON_SHEET + "」シートを用意しました。行を足してシーズンを増やせます。";
 }
 
@@ -670,7 +680,7 @@ function clearSiteCache() {
     if (k.indexOf("gs:") === 0) { try { props.deleteProperty(k); n++; } catch (e) {} }
   });
   try {
-    CacheService.getScriptCache().removeAll(["index", "music", "seasonList", "aliasMap", "knownNames"]);
+    CacheService.getScriptCache().removeAll(["index", "music", "seasonList2", "aliasMap", "knownNames"]);
   } catch (e) {}
   const msg = "試合要約 " + n + " 件と一覧キャッシュ・シーズン一覧・名前対応表を削除しました";
   Logger.log(msg);
@@ -1488,10 +1498,10 @@ function periodOptions() {
     const m = n.match(/^(\d+(?:-\d+)?)月月間試合経過$/) || n.match(/^(\d+(?:-\d+)?)月試合経過$/);
     if (m) out.push({ value: n, label: "今シーズン " + m[1] + "月" });
   });
-  const seasons = seasonList();
-  if (seasons.length >= 2) {
+  if (seasonList().length >= 2) {
     out.push({ value: CAREER_PERIOD, label: "全シーズン通算" });
-    seasons.forEach(function (s) {
+    // 単体で選べるのは試合データを持つシーズンのみ（成績のみの年度は通算にだけ含める）
+    playableSeasons().forEach(function (s) {
       if (!s.current) out.push({ value: "s:" + s.id, label: s.label });
     });
   }
@@ -1510,7 +1520,7 @@ function resolvePeriodValue(pv) {
 // 期間パラメータに過去シーズンが指定されていれば、そのシーズンに切り替える（stats/player用）
 function applyPeriodSeason(pv) {
   const r = resolvePeriodValue(pv);
-  if (r.seasonId && seasonList().some(function (s) { return s.id === r.seasonId && !s.current; })) {
+  if (r.seasonId && playableSeasons().some(function (s) { return s.id === r.seasonId && !s.current; })) {
     _seasonId = r.seasonId;
   }
 }
@@ -1532,28 +1542,84 @@ function periodSelectHtml(currentPeriodValue) {
 
 // 通算: 全シーズンの「全試合経過」を1回だけ読んで、行・打者・投手をまとめて返す。
 // 「通算」を選んだときにしか呼ばれないので、普段の表示は現行シーズンだけで軽いまま。
+// 試合データが無く成績表だけ残っている年度（2022など）を、通算用のデータに変換する。
+// 列は見出し名で探すので、多少レイアウトが違っても拾える。
+function statsOnlySeasonData(book, sheetName) {
+  const bat = {}, pit = {};
+  const sh = book.getSheetByName(sheetName);
+  if (!sh || sh.getLastRow() < 2) return { bat: bat, pit: pit };
+  const v = sh.getDataRange().getValues();
+  const hdr = (v[0] || []).map(function (x) { return stripSpace(x); });
+  function col(label) {
+    for (let i = 0; i < hdr.length; i++) if (hdr[i] === label) return i;
+    return -1;
+  }
+  const c = {
+    pa: col("打席"), ab: col("打数"), h: col("安打"), hr: col("本塁打"), tb: col("塁打"),
+    rbi: col("打点"), bb: col("四球"), so: col("三振"), d2: col("二塁打"), d3: col("三塁打"),
+    hbp: col("死球"), sf: col("犠飛"),
+    ip: col("投球回"), ph: col("被安打"), pbb: col("与四球"), k: col("奪三振"),
+    er: col("自責点"), runs: col("失点"), np: col("投球数"),
+    w: col("勝"), l: col("敗"), hld: col("ホールド"), sv: col("セーブ")
+  };
+  function n(row, i) { return i >= 0 ? (+row[i] || 0) : 0; }
+  for (let r = 1; r < v.length; r++) {
+    const nm = normName(v[r][0]);
+    if (!nm || nm === "平均" || nm === "合計") continue;
+    const pa = n(v[r], c.pa), ab = n(v[r], c.ab);
+    if (pa || ab) {
+      bat[nm] = {
+        pa: pa, ab: ab, h: n(v[r], c.h), d2: n(v[r], c.d2), d3: n(v[r], c.d3),
+        hr: n(v[r], c.hr), tb: n(v[r], c.tb), bb: n(v[r], c.bb), hbp: n(v[r], c.hbp),
+        sf: n(v[r], c.sf), so: n(v[r], c.so), rbi: n(v[r], c.rbi), rab: 0, rh: 0
+      };
+    }
+    const ip = c.ip >= 0 ? (+v[r][c.ip] || 0) : 0;
+    const outs = Math.round(ip * 3); // 投球回は小数（20.333=20回1/3）なので3倍してアウト数に
+    const w = n(v[r], c.w), l = n(v[r], c.l), hld = n(v[r], c.hld), sv = n(v[r], c.sv);
+    if (outs || w || l || hld || sv) {
+      pit[nm] = {
+        outs: outs, np: n(v[r], c.np), ab: 0, h: n(v[r], c.ph), k: n(v[r], c.k),
+        bb: n(v[r], c.pbb), hbp: 0, runs: n(v[r], c.runs), er: n(v[r], c.er),
+        w: w, l: l, hld: hld, sv: sv
+      };
+    }
+  }
+  return { bat: bat, pit: pit };
+}
+
 var _careerCache = null;
 function careerData() {
   if (_careerCache) return _careerCache;
   const rows = [];
   const bat = {}, pit = {};
   const pitFields = ["outs","np","ab","h","k","bb","hbp","runs","er","w","l","hld","sv"];
+  function mergeBat(m) {
+    Object.keys(m).forEach(function (nm) {
+      const a = bat[nm] || (bat[nm] = { pa:0,ab:0,h:0,d2:0,d3:0,hr:0,tb:0,bb:0,hbp:0,sf:0,so:0,rbi:0,rab:0,rh:0 });
+      const x = m[nm];
+      Object.keys(x).forEach(function (f) { a[f] = (a[f] || 0) + (x[f] || 0); });
+    });
+  }
+  function mergePit(m) {
+    Object.keys(m).forEach(function (nm) {
+      const a = pit[nm] || (pit[nm] = { outs:0,np:0,ab:0,h:0,k:0,bb:0,hbp:0,runs:0,er:0,w:0,l:0,hld:0,sv:0 });
+      pitFields.forEach(function (f) { a[f] += m[nm][f] || 0; });
+    });
+  }
   seasonList().forEach(function (s) {
     const book = bookById(s.id);
+    // 成績のみの年度（試合データ無し）は成績表から読み込む
+    if (s.statsSheet) {
+      const d = statsOnlySeasonData(book, s.statsSheet);
+      mergeBat(d.bat); mergePit(d.pit);
+      return;
+    }
     const r = rowsOf(ALL_GAMES, book); // 各シーズン1回だけ読む
     if (!r.length) return;
     rows.push.apply(rows, r);
-    const b = batAllFrom(r);
-    Object.keys(b).forEach(function (nm) {
-      const a = bat[nm] || (bat[nm] = { pa:0,ab:0,h:0,d2:0,d3:0,hr:0,tb:0,bb:0,hbp:0,sf:0,so:0,rbi:0,rab:0,rh:0 });
-      const x = b[nm];
-      Object.keys(x).forEach(function (f) { a[f] = (a[f] || 0) + (x[f] || 0); });
-    });
-    const p = pitAllFrom(r, ALL_GAMES, book);
-    Object.keys(p).forEach(function (nm) {
-      const a = pit[nm] || (pit[nm] = { outs:0,np:0,ab:0,h:0,k:0,bb:0,hbp:0,runs:0,er:0,w:0,l:0,hld:0,sv:0 });
-      pitFields.forEach(function (f) { a[f] += p[nm][f] || 0; });
-    });
+    mergeBat(batAllFrom(r));
+    mergePit(pitAllFrom(r, ALL_GAMES, book));
   });
   _careerCache = { rows: rows, bat: bat, pit: pit };
   return _careerCache;
@@ -2071,7 +2137,8 @@ function page(title, body, autoRefresh) {
 
 function renderIndex() {
   const url = ScriptApp.getService().getUrl();
-  const seasons = seasonList();
+  // 試合一覧に出すのは試合データを持つシーズンのみ（成績のみの年度は通算専用）
+  const seasons = playableSeasons();
   let body = '<h1>⚾ ピンポン野球 速報</h1>';
   // シーズン切り替え（2つ以上あるときだけ）。現行=通常、過去=アーカイブ表示
   if (seasons.length >= 2) {
