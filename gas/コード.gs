@@ -18,7 +18,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v25";
+const SITE_VER = "site v26";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -1333,6 +1333,38 @@ function seisekiTable(headers, row, from, to) {
   return any ? (t + '</table></div>') : '';
 }
 
+// 対戦成績（相性）の表。map = { 相手名: {ab,h,hr} }。対戦打数の多い順
+function matchupTable(url, map, oppHeader, hrHeader, avgHeader) {
+  const arr = Object.keys(map).map(function (k) {
+    const o = map[k];
+    return { opp: k, ab: o.ab, h: o.h, hr: o.hr };
+  }).filter(function (x) { return x.ab > 0 || x.h > 0 || x.hr > 0; });
+  if (!arr.length) return '';
+  arr.sort(function (a, b) { return b.ab - a.ab || b.h - a.h; });
+  let t = '<div class="tbl"><table class="st"><tr><th class="name">' + esc(oppHeader) + '</th>' +
+    '<th>打数</th><th>安打</th><th>' + esc(hrHeader) + '</th><th>' + esc(avgHeader) + '</th></tr>';
+  arr.forEach(function (x) {
+    t += '<tr><td class="name">' + plink(url, x.opp) + '</td><td>' + x.ab + '</td><td>' + x.h +
+      '</td><td>' + x.hr + '</td><td><b>' + avgStr(x.h, x.ab) + '</b></td></tr>';
+  });
+  return t + '</table></div>';
+}
+
+// 相性の良し悪し（規定対戦打数以上で打率が最高/最低の相手を1行で）
+function matchupHighlight(map, goodLabel, badLabel) {
+  const MIN = 4; // これ以上の対戦打数がある相手だけ相性判定に使う
+  const arr = Object.keys(map).map(function (k) {
+    const o = map[k];
+    return { opp: k, ab: o.ab, h: o.h, avg: o.ab ? o.h / o.ab : 0 };
+  }).filter(function (x) { return x.ab >= MIN; });
+  if (arr.length < 2) return '';
+  arr.sort(function (a, b) { return b.avg - a.avg; });
+  const best = arr[0], worst = arr[arr.length - 1];
+  return '<p class="sub">' + esc(goodLabel) + ': <b>' + esc(best.opp) + '</b>（' +
+    avgStr(best.h, best.ab) + '・' + best.ab + '打数）　' + esc(badLabel) + ': <b>' + esc(worst.opp) +
+    '</b>（' + avgStr(worst.h, worst.ab) + '・' + worst.ab + '打数）</p>';
+}
+
 // 全試合経過の日付セル（Dateオブジェクト等）を "YYYY-MM-DD" に整える
 function ymd(dval) {
   if (!dval && dval !== 0) return "";
@@ -1449,6 +1481,33 @@ function renderPlayer(nameRaw, period) {
   if (!found) {
     body += '<p class="sub">成績シートにこの選手の行が見つかりませんでした' +
       '（集計対象外の助っ人などの可能性）。下に出場した試合のみ表示します。</p>';
+  }
+
+  // 対戦成績（相性）: 全試合経過は1打席ごとに打者・投手が入っているので head-to-head を集計できる
+  const batVs = {}, pitVs = {};
+  allRows.forEach(function (r) {
+    if (r.batter === name && r.pitcher) {
+      const o = batVs[r.pitcher] || (batVs[r.pitcher] = { ab: 0, h: 0, hr: 0 });
+      if (isAtBatResult(r.result)) o.ab++;
+      if (isHitResult(r.result)) o.h++;
+      if (r.result === "4塁打") o.hr++;
+    }
+    if (r.pitcher === name && r.batter) {
+      const o = pitVs[r.batter] || (pitVs[r.batter] = { ab: 0, h: 0, hr: 0 });
+      if (isAtBatResult(r.result)) o.ab++;
+      if (isHitResult(r.result)) o.h++;
+      if (r.result === "4塁打") o.hr++;
+    }
+  });
+  if (Object.keys(batVs).length) {
+    body += '<h2>打者 vs 投手（対戦成績）</h2>' +
+      matchupHighlight(batVs, "得意な投手", "苦手な投手") +
+      matchupTable(url, batVs, "投手", "本", "対戦打率");
+  }
+  if (Object.keys(pitVs).length) {
+    body += '<h2>投手 vs 打者（被打・対戦成績）</h2>' +
+      matchupHighlight(pitVs, "抑えている打者", "打たれている打者") +
+      matchupTable(url, pitVs, "打者", "被本", "被打率");
   }
 
   // 試合ごとの成績（打撃・投球の1試合ぶん。試合ページへリンク）
