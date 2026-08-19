@@ -18,7 +18,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v29";
+const SITE_VER = "site v30";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -596,15 +596,17 @@ const LAYOUT_OLD = { stadium:-1, inning:1, tb:2, outs:3, bases:4, batter:7, pitc
 var _layoutCache = {};
 // スプレッドシートの形式を「全試合経過」B1見出しで判別（球場=新, 回=旧）。ブック単位でキャッシュ
 function layoutOf(book) {
-  const id = (book || ss()).getId();
+  const bk = book || ss();
+  const id = bk.getId();
   if (_layoutCache[id]) return _layoutCache[id];
   let L = LAYOUT_NEW;
   try {
-    const sh = (book || ss()).getSheetByName(ALL_GAMES);
-    if (sh) {
-      const b1 = String(sh.getRange(1, 2).getValue()).trim();
-      if (b1 === "回") L = LAYOUT_OLD;
-    }
+    const sh = bk.getSheetByName(ALL_GAMES);
+    const b1 = sh ? String(sh.getRange(1, 2).getValue()).trim() : "";
+    if (b1 === "回") L = LAYOUT_OLD;
+    else if (b1 === "球場") L = LAYOUT_NEW;
+    // 見出しが空のシーズンは成績シートの種類で推定（旧テンプレ=「全指標」／新テンプレ=「シーズン通算成績」）
+    else if (bk.getSheetByName("全指標") && !bk.getSheetByName("シーズン通算成績")) L = LAYOUT_OLD;
   } catch (e) {}
   _layoutCache[id] = L;
   return L;
