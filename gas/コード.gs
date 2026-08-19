@@ -18,7 +18,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v24";
+const SITE_VER = "site v25";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -1299,6 +1299,40 @@ function splitGames(rows) {
   return games;
 }
 
+// 経過シート名に対応する成績シート（〜成績。A1に集計元の経過シート名が入っている）を返す
+function seisekiSheetFor(keikaName) {
+  const sheets = ss().getSheets();
+  for (let i = 0; i < sheets.length; i++) {
+    if (!/成績$/.test(sheets[i].getName())) continue;
+    if (String(sheets[i].getRange("A1").getValue()) === keikaName) return sheets[i];
+  }
+  return null;
+}
+
+// 成績シートの数値を見やすく整える（整数はそのまま、小数は3桁に丸める）
+function fmtStat(v) {
+  if (v === "" || v === null || v === undefined) return "-";
+  if (typeof v === "number") {
+    if (!isFinite(v)) return "∞";
+    if (Math.round(v) === v) return String(v);
+    return String(Math.round(v * 1000) / 1000);
+  }
+  return String(v);
+}
+
+// 成績シートの1行から、列 from〜to を「項目 / 値」表にする（見出しが空の列は飛ばす）
+function seisekiTable(headers, row, from, to) {
+  let t = '<div class="tbl"><table class="st"><tr><th class="name">項目</th><th>値</th></tr>';
+  let any = false;
+  for (let c = from; c <= to; c++) {
+    const label = String(headers[c] || "").trim();
+    if (!label) continue;
+    any = true;
+    t += '<tr><td class="name">' + esc(label) + '</td><td><b>' + esc(fmtStat(row[c])) + '</b></td></tr>';
+  }
+  return any ? (t + '</table></div>') : '';
+}
+
 // 全試合経過の日付セル（Dateオブジェクト等）を "YYYY-MM-DD" に整える
 function ymd(dval) {
   if (!dval && dval !== 0) return "";
@@ -1374,16 +1408,7 @@ function renderPlayer(nameRaw, period) {
   const periods = statPeriods();
   const per = periods.filter(function (p) { return p.sheet === period; })[0] || periods[0];
   const allRows = rowsOf(per.sheet);
-  const bat = batAllFrom(allRows); attachWrcPlus(bat);
-  const pit = pitAllFrom(allRows, per.sheet);
-
-  // 登板数（この期間で投げた試合数）を pit に付与
   const games = splitGames(allRows);
-  games.forEach(function (g) {
-    const seen = {};
-    g.forEach(function (r) { if (r.pitcher) seen[r.pitcher] = true; });
-    Object.keys(seen).forEach(function (pn) { if (pit[pn]) pit[pn].games = (pit[pn].games || 0) + 1; });
-  });
 
   const selStyle = 'background:#17181d;color:#e9e9ec;border:1px solid #33343c;border-radius:8px;padding:8px';
   let body = '<div class="top"><a target="_top" href="' + url + '?view=stats">‹ 成績一覧へ</a></div>' +
@@ -1397,60 +1422,33 @@ function renderPlayer(nameRaw, period) {
         '>' + esc(pp.label) + '</option>';
     }).join('') + '</select></form>';
 
-  const b = bat[name], p = pit[name];
-  if (!b && !(p && (p.outs > 0 || p.games || p.w || p.l || p.hld || p.sv))) {
-    body += '<p class="sub">この期間の成績データがありません。</p>';
-    return page(name + " の成績", body, false);
+  // 全指標: 期間に対応する成績シート（〜成績）の該当行を、列見出しつきでそのまま表示する
+  let found = false;
+  const seiseki = seisekiSheetFor(per.sheet);
+  if (seiseki) {
+    const sv = seiseki.getDataRange().getValues();
+    const headers = sv[0];
+    let prow = null;
+    for (let r = 1; r < sv.length; r++) {
+      if (String(sv[r][0]).trim() === name) { prow = sv[r]; break; }
+    }
+    if (prow) {
+      found = true;
+      // 投手ブロックの名前列（col0以外で値が選手名と一致する最初の列）を打撃/投手の境界にする
+      let j = -1;
+      for (let c = 1; c < prow.length; c++) {
+        if (String(prow[c]).trim() === name) { j = c; break; }
+      }
+      const batTo = (j > 1) ? j - 1 : prow.length - 1;
+      body += '<h2>打撃成績（全指標）</h2>' + seisekiTable(headers, prow, 1, batTo);
+      if (j >= 0 && j + 1 < prow.length) {
+        body += '<h2>投手成績（全指標）</h2>' + seisekiTable(headers, prow, j + 1, prow.length - 1);
+      }
+    }
   }
-
-  if (b) {
-    const batDefs = [
-      findDef(BAT_RANK, "pa"),
-      { label: "打数", val: function (x) { return x.ab; }, noRank: true },
-      findDef(BAT_RANK, "hits"),
-      findDef(BAT_RANK, "d2"),
-      findDef(BAT_RANK, "d3"),
-      findDef(BAT_RANK, "hr"),
-      findDef(BAT_RANK, "rbi"),
-      findDef(BAT_RANK, "bb"),
-      { label: "死球", val: function (x) { return x.hbp; }, noRank: true },
-      findDef(BAT_RANK, "so"),
-      { label: "犠飛", val: function (x) { return x.sf; }, noRank: true },
-      findDef(BAT_RANK, "tb"),
-      findDef(BAT_RANK, "avg"),
-      findDef(BAT_RANK, "obp"),
-      findDef(BAT_RANK, "slg"),
-      findDef(BAT_RANK, "ops"),
-      findDef(BAT_RANK, "risp"),
-      findDef(BAT_RANK, "wrcplus")
-    ];
-    body += '<h2>打撃成績</h2>' + metricTable(bat, batDefs, true, name);
-  }
-
-  if (p && (p.outs > 0 || p.games || p.w || p.l || p.hld || p.sv)) {
-    const pitDefs = [
-      { label: "登板", val: function (x) { return x.games || 0; }, noRank: true },
-      findDef(PIT_RANK, "ip"),
-      findDef(PIT_RANK, "w"),
-      findDef(PIT_RANK, "l"),
-      findDef(PIT_RANK, "hld"),
-      findDef(PIT_RANK, "sv"),
-      findDef(PIT_RANK, "k"),
-      { label: "与四球", val: function (x) { return x.bb; }, noRank: true },
-      { label: "与死球", val: function (x) { return x.hbp; }, noRank: true },
-      { label: "被安打", val: function (x) { return x.h; }, noRank: true },
-      findDef(PIT_RANK, "r"),
-      findDef(PIT_RANK, "er"),
-      { label: "球数", val: function (x) { return x.np; }, noRank: true },
-      findDef(PIT_RANK, "era"),
-      findDef(PIT_RANK, "whip"),
-      findDef(PIT_RANK, "k9"),
-      findDef(PIT_RANK, "bb9"),
-      findDef(PIT_RANK, "kbb"),
-      findDef(PIT_RANK, "oavg"),
-      findDef(PIT_RANK, "ra")
-    ];
-    body += '<h2>投手成績</h2>' + metricTable(pit, pitDefs, false, name);
+  if (!found) {
+    body += '<p class="sub">成績シートにこの選手の行が見つかりませんでした' +
+      '（集計対象外の助っ人などの可能性）。下に出場した試合のみ表示します。</p>';
   }
 
   // 試合ごとの成績（打撃・投球の1試合ぶん。試合ページへリンク）
