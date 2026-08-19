@@ -18,7 +18,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v23";
+const SITE_VER = "site v24";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -75,6 +75,10 @@ function doGet(e) {
     });
   } else if (p.view === "music") {
     h = cached(cache, "music", 600, function () { return renderMusic(); });
+  } else if (p.view === "player") {
+    // 選手個人ページ（選手名・期間ごとにキャッシュ）
+    h = cached(cache, "pl:" + (p.name || "") + ":" + (p.period || ""), 120,
+      function () { return renderPlayer(p.name, p.period); });
   } else if (p.view === "ts") {
     if (p.dir) {
       // サイト上でのズレ補正: 分秒ぶん全時刻をずらして保存し、最新を表示（キャッシュしない）
@@ -1275,6 +1279,229 @@ function statPeriods() {
   return out;
 }
 
+// ---------------- 選手個人ページ ----------------
+
+// 選手名を個人ページへのリンクにする（rawモードでは url が除去され相対リンクになる）
+function plink(url, name) {
+  if (!name) return "";
+  return '<a target="_top" href="' + url + '?view=player&name=' +
+    encodeURIComponent(name) + '">' + esc(name) + '</a>';
+}
+
+// 全試合経過の行を試合ごとに分割（イニングが戻る＝次の試合、日付が変わる＝次の試合）
+function splitGames(rows) {
+  const games = [];
+  let cur = null, prev = null;
+  rows.forEach(function (r) {
+    if (!prev || r.date !== prev.date || r.inning < prev.inning) { cur = []; games.push(cur); }
+    cur.push(r); prev = r;
+  });
+  return games;
+}
+
+// 全試合経過の日付セル（Dateオブジェクト等）を "YYYY-MM-DD" に整える
+function ymd(dval) {
+  if (!dval && dval !== 0) return "";
+  const d = (dval instanceof Date) ? dval : new Date(dval);
+  if (isNaN(d.getTime())) return String(dval);
+  return Utilities.formatDate(d, "Asia/Tokyo", "yyyy-MM-dd");
+}
+
+// 日付 → その日の試合シート名（D, D-2, … の順）
+function gamesByDate() {
+  const map = {};
+  gameSheetNames().forEach(function (n) {
+    const m = n.match(/^(\d{4}-\d{2}-\d{2})(?:-(\d+))?$/);
+    if (!m) return;
+    (map[m[1]] = map[m[1]] || []).push({ n: n, k: m[2] ? parseInt(m[2], 10) : 1 });
+  });
+  Object.keys(map).forEach(function (d) { map[d].sort(function (a, b) { return a.k - b.k; }); });
+  return map;
+}
+
+// 指標 def における name の順位（rate種目は規定到達者のみ）。{rank, total}
+function statRankOf(dataMap, def, isBat, name) {
+  const arr = [];
+  Object.keys(dataMap).forEach(function (nm) {
+    const d = dataMap[nm];
+    if (def.rate) {
+      if (isBat && d.pa < BAT_MIN_PA) return;
+      if (!isBat && d.outs < PIT_MIN_OUTS) return;
+    }
+    const v = def.val(d);
+    if (v === null || v === undefined || (typeof v === "number" && isNaN(v) && v !== Infinity)) return;
+    arr.push({ nm: nm, v: v });
+  });
+  arr.sort(function (a, b) { return def.asc ? a.v - b.v : b.v - a.v; });
+  let rank = 0, shown = 0, prev = null, mine = null;
+  for (let i = 0; i < arr.length; i++) {
+    shown++;
+    if (prev === null || arr[i].v !== prev) rank = shown;
+    prev = arr[i].v;
+    if (arr[i].nm === name) mine = rank;
+  }
+  return { rank: mine, total: arr.length };
+}
+
+function findDef(defs, id) { return defs.filter(function (d) { return d.id === id; })[0]; }
+
+// 1選手の指標一覧を「項目 / 値 / 順位」の表にする
+function metricTable(dataMap, displayDefs, isBat, name) {
+  const d = dataMap[name];
+  let t = '<div class="tbl"><table class="st"><tr><th class="name">項目</th><th>値</th><th>順位</th></tr>';
+  displayDefs.forEach(function (def) {
+    if (!def) return;
+    const v = def.val(d);
+    if (v === null || v === undefined || (typeof v === "number" && isNaN(v) && v !== Infinity)) {
+      t += '<tr><td class="name">' + esc(def.label) + '</td><td>-</td><td>-</td></tr>';
+      return;
+    }
+    const disp = def.fmt ? def.fmt(v) : String(v);
+    let rkStr = "-";
+    if (!def.noRank) {
+      const rk = statRankOf(dataMap, def, isBat, name);
+      rkStr = rk.rank ? (rk.rank + '位 / ' + rk.total + '人') : (def.rate ? '規定未満' : '-');
+    }
+    t += '<tr><td class="name">' + esc(def.label) + '</td><td><b>' + esc(disp) +
+      '</b></td><td class="sub" style="text-align:center">' + rkStr + '</td></tr>';
+  });
+  return t + '</table></div>';
+}
+
+function renderPlayer(nameRaw, period) {
+  const url = ScriptApp.getService().getUrl();
+  const name = (nameRaw || "").toString();
+  const periods = statPeriods();
+  const per = periods.filter(function (p) { return p.sheet === period; })[0] || periods[0];
+  const allRows = rowsOf(per.sheet);
+  const bat = batAllFrom(allRows); attachWrcPlus(bat);
+  const pit = pitAllFrom(allRows, per.sheet);
+
+  // 登板数（この期間で投げた試合数）を pit に付与
+  const games = splitGames(allRows);
+  games.forEach(function (g) {
+    const seen = {};
+    g.forEach(function (r) { if (r.pitcher) seen[r.pitcher] = true; });
+    Object.keys(seen).forEach(function (pn) { if (pit[pn]) pit[pn].games = (pit[pn].games || 0) + 1; });
+  });
+
+  const selStyle = 'background:#17181d;color:#e9e9ec;border:1px solid #33343c;border-radius:8px;padding:8px';
+  let body = '<div class="top"><a target="_top" href="' + url + '?view=stats">‹ 成績一覧へ</a></div>' +
+    '<h1>' + esc(name) + '</h1>' +
+    '<form method="get" action="' + url + '" target="_top" style="margin:6px 0 4px">' +
+    '<input type="hidden" name="view" value="player">' +
+    '<input type="hidden" name="name" value="' + esc(name) + '">' +
+    '<select name="period" onchange="this.form.submit()" style="' + selStyle + '">' +
+    periods.map(function (pp) {
+      return '<option value="' + esc(pp.sheet) + '"' + (pp.sheet === per.sheet ? ' selected' : '') +
+        '>' + esc(pp.label) + '</option>';
+    }).join('') + '</select></form>';
+
+  const b = bat[name], p = pit[name];
+  if (!b && !(p && (p.outs > 0 || p.games || p.w || p.l || p.hld || p.sv))) {
+    body += '<p class="sub">この期間の成績データがありません。</p>';
+    return page(name + " の成績", body, false);
+  }
+
+  if (b) {
+    const batDefs = [
+      findDef(BAT_RANK, "pa"),
+      { label: "打数", val: function (x) { return x.ab; }, noRank: true },
+      findDef(BAT_RANK, "hits"),
+      findDef(BAT_RANK, "d2"),
+      findDef(BAT_RANK, "d3"),
+      findDef(BAT_RANK, "hr"),
+      findDef(BAT_RANK, "rbi"),
+      findDef(BAT_RANK, "bb"),
+      { label: "死球", val: function (x) { return x.hbp; }, noRank: true },
+      findDef(BAT_RANK, "so"),
+      { label: "犠飛", val: function (x) { return x.sf; }, noRank: true },
+      findDef(BAT_RANK, "tb"),
+      findDef(BAT_RANK, "avg"),
+      findDef(BAT_RANK, "obp"),
+      findDef(BAT_RANK, "slg"),
+      findDef(BAT_RANK, "ops"),
+      findDef(BAT_RANK, "risp"),
+      findDef(BAT_RANK, "wrcplus")
+    ];
+    body += '<h2>打撃成績</h2>' + metricTable(bat, batDefs, true, name);
+  }
+
+  if (p && (p.outs > 0 || p.games || p.w || p.l || p.hld || p.sv)) {
+    const pitDefs = [
+      { label: "登板", val: function (x) { return x.games || 0; }, noRank: true },
+      findDef(PIT_RANK, "ip"),
+      findDef(PIT_RANK, "w"),
+      findDef(PIT_RANK, "l"),
+      findDef(PIT_RANK, "hld"),
+      findDef(PIT_RANK, "sv"),
+      findDef(PIT_RANK, "k"),
+      { label: "与四球", val: function (x) { return x.bb; }, noRank: true },
+      { label: "与死球", val: function (x) { return x.hbp; }, noRank: true },
+      { label: "被安打", val: function (x) { return x.h; }, noRank: true },
+      findDef(PIT_RANK, "r"),
+      findDef(PIT_RANK, "er"),
+      { label: "球数", val: function (x) { return x.np; }, noRank: true },
+      findDef(PIT_RANK, "era"),
+      findDef(PIT_RANK, "whip"),
+      findDef(PIT_RANK, "k9"),
+      findDef(PIT_RANK, "bb9"),
+      findDef(PIT_RANK, "kbb"),
+      findDef(PIT_RANK, "oavg"),
+      findDef(PIT_RANK, "ra")
+    ];
+    body += '<h2>投手成績</h2>' + metricTable(pit, pitDefs, false, name);
+  }
+
+  // 試合ごとの成績（打撃・投球の1試合ぶん。試合ページへリンク）
+  const gmap = gamesByDate();
+  const dateSeen = {};
+  let log = '';
+  games.forEach(function (g) {
+    if (!g.length) return;
+    // 全試合経過の日付セルはDateオブジェクト。試合シート名(YYYY-MM-DD)と照合するため変換する
+    const date = ymd(g[0].date);
+    const idx = (dateSeen[date] = (dateSeen[date] || 0));
+    dateSeen[date] = idx + 1;
+    const sheetName = (gmap[date] && gmap[date][idx]) ? gmap[date][idx].n : null;
+
+    let ab = 0, h = 0, hr = 0, rbi = 0, batted = false;
+    let outs = 0, ph = 0, pk = 0, pbb = 0, pruns = 0, pitched = false;
+    g.forEach(function (r) {
+      if (r.batter === name) {
+        batted = true;
+        if (isAtBatResult(r.result)) ab++;
+        if (isHitResult(r.result)) h++;
+        if (r.result === "4塁打") hr++;
+        rbi += r.rbi;
+      }
+      if (r.pitcher === name) {
+        pitched = true;
+        outs += outsAddedOf(r);
+        if (isHitResult(r.result)) ph++;
+        if (r.result === "空三振" || r.result === "見三振") pk++;
+        if (r.result === "四球") pbb++;
+        pruns += r.runs;
+      }
+    });
+    if (!batted && !pitched) return;
+
+    let line = '';
+    if (batted) line += '打 ' + ab + '-' + h + (hr ? ' 本' + hr : '') + (rbi ? ' 点' + rbi : '');
+    if (pitched) line += (line ? '　' : '') + '投 ' + ipStr(outs) + '回 被' + ph + ' 奪' + pk + ' 四' + pbb + ' 失' + pruns;
+    const label = esc(date) + '　' + esc(g[0].stadium || '');
+    if (sheetName) {
+      log += '<a class="card" target="_top" href="' + url + '?view=game&sheet=' + encodeURIComponent(sheetName) + '">' +
+        '<div class="d">' + label + '</div><div style="margin-top:2px">' + esc(line) + '</div></a>';
+    } else {
+      log += '<div class="card"><div class="d">' + label + '</div><div style="margin-top:2px">' + esc(line) + '</div></div>';
+    }
+  });
+  if (log) body += '<h2>試合ごとの成績</h2>' + log;
+
+  return page(name + " の成績", body, false);
+}
+
 function renderStats(type, statId, period) {
   const url = ScriptApp.getService().getUrl();
   const isBat = type !== "pit";
@@ -1330,7 +1557,7 @@ function renderStats(type, statId, period) {
     if (prev === null || e.v !== prev) rank = shown;
     prev = e.v;
     const disp = def.fmt ? def.fmt(e.v) : String(e.v);
-    t += '<tr><td>' + rank + '</td><td class="name">' + esc(e.name) + '</td>' +
+    t += '<tr><td>' + rank + '</td><td class="name">' + plink(url, e.name) + '</td>' +
       '<td><b>' + disp + '</b></td>' +
       (isBat ? '<td>' + e.d.pa + '</td>' : '<td>' + ipStr(e.d.outs) + '</td>') + '</tr>';
   });
@@ -1576,13 +1803,13 @@ function renderGame(name) {
     const srec = seasonPitcherRecords(date);
     body += '<h2>責任投手</h2><div class="tbl"><table class="st">';
     if (pb.win) body += '<tr><td style="width:3.2em"><span class="chip win">勝</span></td><td class="name">' +
-      esc(pb.win) + '<span class="sub">' + recStr(srec, pb.win) + '</span></td></tr>';
+      plink(url, pb.win) + '<span class="sub">' + recStr(srec, pb.win) + '</span></td></tr>';
     if (pb.loss) body += '<tr><td><span class="chip lose">敗</span></td><td class="name">' +
-      esc(pb.loss) + '<span class="sub">' + recStr(srec, pb.loss) + '</span></td></tr>';
+      plink(url, pb.loss) + '<span class="sub">' + recStr(srec, pb.loss) + '</span></td></tr>';
     pb.holds.forEach(h => body += '<tr><td><span class="chip hold">H</span></td><td class="name">' +
-      esc(h) + '<span class="sub">' + recStr(srec, h) + '</span></td></tr>');
+      plink(url, h) + '<span class="sub">' + recStr(srec, h) + '</span></td></tr>');
     pb.saves.forEach(s => body += '<tr><td><span class="chip save">S</span></td><td class="name">' +
-      esc(s) + '<span class="sub">' + recStr(srec, s) + '</span></td></tr>');
+      plink(url, s) + '<span class="sub">' + recStr(srec, s) + '</span></td></tr>');
     body += '</table></div>';
   }
 
@@ -1600,7 +1827,7 @@ function renderGame(name) {
         }
       }
       const kind = hr.runs >= 4 ? "満塁" : hr.runs === 3 ? "3ラン" : hr.runs === 2 ? "2ラン" : "ソロ";
-      body += '<tr><td class="name">' + esc(hr.batter) + '</td><td>' + no + '号（' +
+      body += '<tr><td class="name">' + plink(url, hr.batter) + '</td><td>' + no + '号（' +
         hr.inning + '回' + esc(hr.tb) + kind + '）</td></tr>';
     });
     body += '</table></div>';
@@ -1626,7 +1853,7 @@ function renderGame(name) {
     names.forEach(n => {
       const b = st[n];
       const sa = seasonBat[n] || { ab: 0, h: 0 };
-      t += '<tr><td class="name">' + esc(n) + '</td><td>' + avgStr(sa.h, sa.ab) + '</td>' +
+      t += '<tr><td class="name">' + plink(url, n) + '</td><td>' + avgStr(sa.h, sa.ab) + '</td>' +
         '<td>' + b.ab + '</td><td>' + b.h + '</td><td>' + b.rbi + '</td><td>' + b.hr + '</td></tr>';
     });
     return t + '</table></div>';
@@ -1652,7 +1879,7 @@ function renderGame(name) {
         else if (pb.saves.indexOf(n) >= 0) mark = '<span class="chip save">S</span>';
       }
       const rec = pb && pb.pitchers[n] ? pb.pitchers[n] : null;
-      t += '<tr><td style="width:3.2em">' + mark + '</td><td class="name">' + esc(n) + '</td>' +
+      t += '<tr><td style="width:3.2em">' + mark + '</td><td class="name">' + plink(url, n) + '</td>' +
         '<td>' + ipStr(p.outs) + '</td><td>' + p.np + '</td><td>' + p.h + '</td>' +
         '<td>' + p.k + '</td><td>' + p.bb + '</td><td>' + p.hbp + '</td>' +
         '<td>' + (rec ? rec.runs : p.runs) + '</td><td>' + (rec ? rec.er : '-') + '</td></tr>';
