@@ -18,7 +18,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v34";
+const SITE_VER = "site v35";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -1486,7 +1486,8 @@ const PIT_RANK = [
 ];
 
 // 期間タブ用: 存在する月間経過シートを列挙（[{sheet, label}]。先頭は全期間）
-const CAREER_PERIOD = "__career__"; // 全シーズン合算（成績ページの期間セレクタ用）
+const CAREER_PERIOD = "__career__";     // 全シーズン合算（成績ページの期間セレクタ用）
+const STATSONLY_PERIOD = "__statsonly__"; // 成績のみの年度（試合データ無し）
 // 期間セレクタ（シーズンと期間を1つにまとめた選択肢）。上から順に:
 //   今シーズン通算 → 今シーズンn月 → 全シーズン通算 → 過去シーズン（各シーズン通算のみ）
 // 値: "" = 今シーズン通算 / 月間シート名 / CAREER_PERIOD / "s:<シーズンID>"
@@ -1500,21 +1501,39 @@ function periodOptions() {
   });
   if (seasonList().length >= 2) {
     out.push({ value: CAREER_PERIOD, label: "全シーズン通算" });
-    // 単体で選べるのは試合データを持つシーズンのみ（成績のみの年度は通算にだけ含める）
+    // 試合データを持つ過去シーズン
     playableSeasons().forEach(function (s) {
       if (!s.current) out.push({ value: "s:" + s.id, label: s.label });
+    });
+    // 成績のみの年度（試合データ無し）。成績は見られるが試合一覧には出ない
+    seasonList().forEach(function (s) {
+      if (s.statsSheet) out.push({ value: "so:" + s.id, label: s.label });
     });
   }
   return out;
 }
 
-// 統一期間の値を {seasonId, sheet} に解く
+// 統一期間の値を {seasonId, sheet, statsOnly} に解く
 function resolvePeriodValue(pv) {
   const v = String(pv || "");
+  if (v.indexOf("so:") === 0) return { seasonId: v.slice(3), sheet: STATSONLY_PERIOD, statsOnly: true };
   if (v.indexOf("s:") === 0) return { seasonId: v.slice(2), sheet: ALL_GAMES };
   if (v === CAREER_PERIOD) return { seasonId: "", sheet: CAREER_PERIOD };
   if (v && v !== ALL_GAMES) return { seasonId: "", sheet: v }; // 今シーズンの月間
   return { seasonId: "", sheet: ALL_GAMES };
+}
+
+// 成績のみの年度の集計データ（指定シーズンの成績表を読む）
+function statsOnlyDataOf(seasonId) {
+  const s = seasonList().filter(function (x) { return x.id === seasonId && x.statsSheet; })[0];
+  if (!s) return { bat: {}, pit: {} };
+  return statsOnlySeasonData(bookById(s.id), s.statsSheet);
+}
+// 成績のみの年度の成績シート本体（選手ページで全項目を出すのに使う）
+function statsOnlySheetOf(seasonId) {
+  const s = seasonList().filter(function (x) { return x.id === seasonId && x.statsSheet; })[0];
+  if (!s) return null;
+  return bookById(s.id).getSheetByName(s.statsSheet);
 }
 
 // 期間パラメータに過去シーズンが指定されていれば、そのシーズンに切り替える（stats/player用）
@@ -1830,8 +1849,9 @@ function renderPlayer(nameRaw, period) {
   // 期間（統一セレクタ: 今シーズン通算/今シーズンn月/全シーズン通算/過去シーズン）
   const rp = resolvePeriodValue(period);
   const isCareer = rp.sheet === CAREER_PERIOD;
-  // 通算は「シート」が存在しないので、全シーズンを1回だけ読んで合算したものを使う
-  const allRows = isCareer ? careerData().rows : rowsOf(rp.sheet);
+  const isStatsOnly = !!rp.statsOnly;
+  // 通算は全シーズンを1回だけ読んで合算。成績のみの年度は試合データが無いので空
+  const allRows = isCareer ? careerData().rows : (isStatsOnly ? [] : rowsOf(rp.sheet));
   const games = splitGames(allRows);
 
   let body = '<div class="top"><a target="_top" href="' + url + '?view=stats' + seasonQ() + '">‹ 成績一覧へ</a></div>' +
@@ -1863,8 +1883,9 @@ function renderPlayer(nameRaw, period) {
     }
   }
 
-  // 全指標: 期間に対応する成績シート（〜成績）の該当行を、列見出しつきでそのまま表示する
-  const seiseki = isCareer ? null : seisekiSheetFor(rp.sheet);
+  // 全指標: 期間に対応する成績シートの該当行を、列見出しつきでそのまま表示する
+  const seiseki = isCareer ? null
+    : (isStatsOnly ? statsOnlySheetOf(rp.seasonId) : seisekiSheetFor(rp.sheet));
   if (seiseki) {
     const sv = seiseki.getDataRange().getValues();
     const headers = sv[0];
@@ -1881,15 +1902,18 @@ function renderPlayer(nameRaw, period) {
         if (normName(prow[c]) === name) { j = c; break; }
       }
       const batTo = (j > 1) ? j - 1 : prow.length - 1;
-      body += '<h2>打撃成績（全指標）</h2>' + seisekiTable(headers, prow, 1, batTo);
+      // 名前が2度出ないシート（打撃と投手が1行に並ぶ形式）は分割せず一覧で出す
+      body += '<h2>' + (j >= 0 ? '打撃成績（全指標）' : '成績（全指標）') + '</h2>' +
+        seisekiTable(headers, prow, 1, batTo);
       if (j >= 0 && j + 1 < prow.length) {
         body += '<h2>投手成績（全指標）</h2>' + seisekiTable(headers, prow, j + 1, prow.length - 1);
       }
     }
   }
   if (!found && !isCareer) {
-    body += '<p class="sub">成績シートにこの選手の行が見つかりませんでした' +
-      '（集計対象外の助っ人などの可能性）。下に出場した試合のみ表示します。</p>';
+    body += '<p class="sub">この期間の成績にこの選手の行が見つかりませんでした' +
+      (isStatsOnly ? '（この年度は未在籍の可能性）。' : '（集計対象外の助っ人などの可能性）。下に出場した試合のみ表示します。') +
+      '</p>';
   }
 
   // 対戦成績（相性）: 全試合経過は1打席ごとに打者・投手が入っているので head-to-head を集計できる
@@ -1975,10 +1999,17 @@ function renderStats(type, statId, period) {
 
   // 期間（統一セレクタ: 今シーズン通算/今シーズンn月/全シーズン通算/過去シーズン）
   const rp = resolvePeriodValue(period);
-  // 通算（全シーズン合算）は専用集計、それ以外はそのシーズンの経過シートから
+  // 通算＝全シーズン合算、成績のみの年度＝成績表から、それ以外＝そのシーズンの経過シートから
   const isCareer = rp.sheet === CAREER_PERIOD;
-  const data = isCareer ? (isBat ? careerBatData() : careerPitData())
-    : (isBat ? batAllFrom(rowsOf(rp.sheet)) : pitAllFrom(rowsOf(rp.sheet), rp.sheet));
+  let data;
+  if (isCareer) {
+    data = isBat ? careerBatData() : careerPitData();
+  } else if (rp.statsOnly) {
+    const d = statsOnlyDataOf(rp.seasonId);
+    data = isBat ? d.bat : d.pit;
+  } else {
+    data = isBat ? batAllFrom(rowsOf(rp.sheet)) : pitAllFrom(rowsOf(rp.sheet), rp.sheet);
+  }
   if (isBat) attachWrcPlus(data); // WRC+ はリーグ全体から算出するため事前に付与
 
   // 対象者の抽出（率系は規定ライン以上のみ）
