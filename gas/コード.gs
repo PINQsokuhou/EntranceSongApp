@@ -18,7 +18,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v51";
+const SITE_VER = "site v52";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -1256,6 +1256,61 @@ function similarity(a, b) {
   return denom ? (2 * hit) / denom : 0;
 }
 
+// カタカナ書きの洋楽（例: エド・シーラン / シェイプオブユー）を元の英語表記に直す。
+// Geminiに聞いて "アーティスト||曲名" の形で返してもらう。キー未設定なら何もしない。
+const KATAKANA_ONLY = /^[ァ-ヶー・･\s　]+$/;
+function guessEnglishTitle(artist, title) {
+  const key = geminiKey();
+  if (!key) return null;
+  // カタカナだけで書かれている部分が無ければ変換の必要なし（半角カナも全角に直して判定）
+  const aZ = hankakuKanaToZenkaku(artist), tZ = hankakuKanaToZenkaku(title);
+  const aKana = aZ && KATAKANA_ONLY.test(aZ);
+  const tKana = tZ && KATAKANA_ONLY.test(tZ);
+  if (!aKana && !tKana) return null;
+
+  const cache = CacheService.getScriptCache();
+  const ck = "en:" + Utilities.base64EncodeWebSafe(artist + "|" + title).slice(0, 200);
+  const hit = cache.get(ck);
+  if (hit) {
+    try { const o = JSON.parse(hit); return o && o.title ? o : null; } catch (e) {}
+  }
+
+  const prompt =
+    "次はカタカナで書かれた楽曲情報です。原題（英語などの元の表記）に直してください。\n" +
+    "アーティスト: " + (artist || "(不明)") + "\n" +
+    "曲名: " + title + "\n\n" +
+    "回答は「アーティスト||曲名」の1行だけ。説明や記号は付けないでください。\n" +
+    "元から日本語の曲、または分からない場合は「不明」とだけ答えてください。";
+  let res;
+  try {
+    res = UrlFetchApp.fetch(
+      "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODEL +
+      ":generateContent?key=" + key,
+      {
+        method: "post",
+        contentType: "application/json",
+        payload: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+        muteHttpExceptions: true
+      }
+    );
+  } catch (e) { return null; }
+  if (res.getResponseCode() !== 200) return null;
+  let text = "";
+  try {
+    text = JSON.parse(res.getContentText()).candidates[0].content.parts[0].text.trim();
+  } catch (e) { return null; }
+  if (!text || text.indexOf("不明") >= 0) return null;
+
+  const parts = text.split("||");
+  const out = {
+    artist: (parts.length > 1 ? parts[0] : "").trim(),
+    title: (parts.length > 1 ? parts[1] : parts[0]).trim()
+  };
+  if (!out.title) return null;
+  try { cache.put(ck, JSON.stringify(out), 21600); } catch (e) {}
+  return out;
+}
+
 // 検索して最有力の1曲を返す { url, name, artist, score } / 見つからなければ null
 // 完全一致でなくても拾えるよう、条件を変えて何通りか検索し、似ている度合いで選ぶ。
 function spotifySearchTrack(token, artist, title) {
@@ -1301,29 +1356,53 @@ function spotifySearchTrack(token, artist, title) {
     if (candidates.length >= 10) break;
     query(attempts[i][0], attempts[i][1]);
   }
-  if (!candidates.length) return null;
 
-  // 曲名の近さを重く、アーティストの近さを軽く見て点数化
-  let best = null, bestScore = -1;
-  candidates.forEach(function (it) {
-    const ts = similarity(t, it.name);
-    let as = 0;
-    if (a) {
-      (it.artists || []).forEach(function (x) {
-        const s = similarity(a, x.name);
-        if (s > as) as = s;
-      });
+  // 候補の中から、曲名の近さを重く・アーティストの近さを軽く見て一番良いものを選ぶ
+  function pickBest(qTitle, qArtist) {
+    let b = null, bs = -1;
+    candidates.forEach(function (it) {
+      const ts = similarity(qTitle, it.name);
+      let as = 0;
+      if (qArtist) {
+        (it.artists || []).forEach(function (x) {
+          const s = similarity(qArtist, x.name);
+          if (s > as) as = s;
+        });
+      }
+      const score = qArtist ? (ts * 0.7 + as * 0.3) : ts;
+      if (score > bs) { bs = score; b = it; }
+    });
+    return { item: b, score: bs };
+  }
+
+  let picked = candidates.length ? pickBest(t, a) : { item: null, score: -1 };
+
+  // カタカナ書きの洋楽は、そのままだと候補が無い／似ていないことがある。
+  // Geminiで原題を推測して検索し直し、良くなればそちらを採用する。
+  if (picked.score < 0.6) {
+    const en = guessEnglishTitle(a, t);
+    if (en && (en.title !== t || en.artist !== a)) {
+      const enPlain = en.title.replace(/[（(\[【].*?[）)\]】]/g, " ").replace(/\s+/g, " ").trim();
+      [[en.artist ? (en.title + " " + en.artist) : en.title, false],
+       [en.artist ? 'track:"' + en.title + '" artist:"' + en.artist + '"' : "", false],
+       [enPlain !== en.title ? enPlain : "", false]
+      ].forEach(function (q) { query(q[0], q[1]); });
+      const alt = pickBest(en.title, en.artist);
+      if (alt.item && alt.score > picked.score) {
+        picked = alt;
+        picked.via = "原題推定: " + (en.artist ? en.artist + " / " : "") + en.title;
+      }
     }
-    const score = a ? (ts * 0.7 + as * 0.3) : ts;
-    if (score > bestScore) { bestScore = score; best = it; }
-  });
-  if (!best) return null;
+  }
+  if (!picked.item) return null;
 
+  const best = picked.item;
   return {
     url: "https://open.spotify.com/track/" + best.id,
     name: best.name,
     artist: (best.artists || []).map(function (x) { return x.name; }).join(", "),
-    score: Math.round(bestScore * 100) / 100
+    score: Math.round(picked.score * 100) / 100,
+    via: picked.via || ""
   };
 }
 
@@ -1364,7 +1443,8 @@ function fillSpotifyLinksCore(dryRun) {
       // 似ている度合いが低いものは目印を付けて、あとで見直せるようにする
       const mark = (hit.score != null && hit.score < 0.6) ? "△ 要確認" : "○";
       log.push(mark + " " + name + " " + p.label + " : " + raw + "  →  " +
-        hit.artist + " / " + hit.name + "（一致度 " + (hit.score != null ? hit.score : "-") + "）");
+        hit.artist + " / " + hit.name + "（一致度 " + (hit.score != null ? hit.score : "-") + "）" +
+        (hit.via ? "  ※" + hit.via : ""));
       writes.push({ row: r + 1, col: p.url + 1, url: hit.url, hit: hit });
     });
   }
@@ -1576,9 +1656,8 @@ function rebuildSongForm() {
   return "フォームを作り直しました（名前の選択肢 " + members.length + "人）。\n" +
     "編集URL: " + form.getEditUrl() + "\n回答URL: " + form.getPublishedUrl();
 }
-// 通知メールの宛先。空だとスクリプトを動かすアカウント宛になるので、
-// 受け取りたいアドレスが別ならここに書く（例: "you@example.com"）
-const NOTIFY_EMAIL = "";
+// 通知メールの宛先。空にするとスクリプトを動かすアカウント宛になる
+const NOTIFY_EMAIL = "hanabidn515@gmail.com";
 
 // 「使う場面」の回答 → 楽曲登録シートの列（0始まり）
 function sceneToColumn(scene) {
