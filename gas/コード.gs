@@ -12,13 +12,15 @@ const ROSTER_SHEET = "楽曲登録";  // メンバー・楽曲の一元管理シ
 // 楽曲登録を別ファイルに置く場合、そのスプレッドシートIDを入れる（"" なら同じファイル内）
 const ROSTER_SS_ID = "1_7pMPpgLpNvroqfYcMRODo3t8S_OHVzP69nqMAzLbig";
 const LIVE_SHEET = "LIVE";        // 試合中のリアルタイム記録
+// ページのキャッシュ保持時間（秒）。試合を保存すると関係するキャッシュは消えるので長めでよい
+const CACHE_TTL = 21600; // 6時間（CacheService の上限）
 const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの本文を試合ごとに保存（複数端末で閲覧用）
 // 新しい月の「N月間成績」を作るときに複製するテンプレシート名。
 // A1に経過シート名を入れると全数式が追従する作りのシートを指定する。
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v54";
+const SITE_VER = "site v55";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -76,16 +78,16 @@ function doGet(e) {
     h = (p.sheet === LIVE_SHEET) ? renderGame(p.sheet)
       : cached(cache, sk + "g:" + p.sheet, 1800, function () { return renderGame(p.sheet); });
   } else if (p.view === "stats") {
-    // 個人成績（種目・期間ごとにキャッシュ）
+    // 個人成績（種目・期間ごとにキャッシュ）。試合を保存したときに消えるので長めで良い
     const key = sk + "s:" + (p.type || "") + ":" + (p.period || "") + ":" + (p.stat || "");
-    h = cached(cache, key, 90, function () {
+    h = cached(cache, key, CACHE_TTL, function () {
       return renderStats(p.type || "bat", p.stat || "", p.period || "");
     });
   } else if (p.view === "music") {
-    h = cached(cache, sk + "music", 600, function () { return renderMusic(); });
+    h = cached(cache, sk + "music", CACHE_TTL, function () { return renderMusic(); });
   } else if (p.view === "player") {
     // 選手個人ページ（選手名・期間ごとにキャッシュ）
-    h = cached(cache, sk + "pl:" + (p.name || "") + ":" + (p.period || ""), 120,
+    h = cached(cache, sk + "pl:" + (p.name || "") + ":" + (p.period || ""), CACHE_TTL,
       function () { return renderPlayer(p.name, p.period); });
   } else if (p.view === "ts") {
     if (p.dir) {
@@ -98,7 +100,9 @@ function doGet(e) {
     }
   } else {
     // 試合一覧（全シートを読むので特にキャッシュが効く）
-    h = cached(cache, sk + "index", 60, function () { return renderIndex(); });
+    // ライブ中は速報を止めないよう短く、それ以外は長く持たせる
+    const idxTtl = liveMeta() ? 30 : CACHE_TTL;
+    h = cached(cache, sk + "index", idxTtl, function () { return renderIndex(); });
   }
 
   // raw=1: 静的ホスティングのラッパーページ（site/index.html）から fetch で読む用。
@@ -111,13 +115,41 @@ function doGet(e) {
   return htmlOut(h);
 }
 
-// キャッシュにあれば返し、無ければ生成して保存（100KB未満のみ保存）
+// キャッシュにあれば返し、無ければ生成して保存（100KB未満のみ保存）。
+// CacheService には「まとめて消す」機能が無いので、保存したキーの一覧を控えておく。
 function cached(cache, key, ttl, build) {
   let h = cache.get(key);
   if (h) return h;
   h = build();
-  if (h && h.length < 100000) { try { cache.put(key, h, ttl); } catch (e) {} }
+  if (h && h.length < 100000) {
+    try { cache.put(key, h, ttl); rememberCacheKey(cache, key); } catch (e) {}
+  }
   return h;
+}
+
+const CACHE_INDEX_KEY = "__keys__";
+function rememberCacheKey(cache, key) {
+  try {
+    const raw = cache.get(CACHE_INDEX_KEY);
+    let keys = raw ? JSON.parse(raw) : [];
+    if (keys.indexOf(key) >= 0) return;
+    keys.push(key);
+    if (keys.length > 400) keys = keys.slice(-400); // 増えすぎたら古いものから捨てる
+    cache.put(CACHE_INDEX_KEY, JSON.stringify(keys), CACHE_TTL);
+  } catch (e) {}
+}
+
+// 試合の保存やデータ修正のあとに、作り置きしたページを全部捨てる
+function invalidatePageCaches() {
+  const cache = CacheService.getScriptCache();
+  try {
+    const raw = cache.get(CACHE_INDEX_KEY);
+    const keys = raw ? JSON.parse(raw) : [];
+    if (keys.length) cache.removeAll(keys);
+    cache.remove(CACHE_INDEX_KEY);
+  } catch (e) {}
+  // 接頭辞なしで保存している古いキーも念のため消す
+  try { cache.removeAll(["index", "music", "seasonList2", "aliasData", "knownNames"]); } catch (e) {}
 }
 
 function doPost(e) {
@@ -512,8 +544,8 @@ function saveGame(d) {
   if (d.ytText) { try { saveTsText(name, d.ytText); } catch (e) {} }
 
   SpreadsheetApp.flush();
-  // 一覧キャッシュを消して、終わった試合をすぐ反映
-  try { CacheService.getScriptCache().remove("index"); } catch (e) {}
+  // 試合が増えたので、関係するページのキャッシュを消して次の表示で作り直させる
+  invalidatePageCaches();
   return { ok: true, sheet: name, allGames: !!allSheet, monthly: monthly ? monthly.getName() : null };
 }
 
@@ -820,9 +852,16 @@ function esc(s) {
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+// シート名の一覧は1リクエスト中に何度も要るので、ブックごとに覚えておく
+var _sheetNameCache = {};
+function sheetNamesOf(book) {
+  const b = book || ss();
+  const id = b.getId();
+  if (!_sheetNameCache[id]) _sheetNameCache[id] = b.getSheets().map(function (s) { return s.getName(); });
+  return _sheetNameCache[id];
+}
 function gameSheetNames() {
-  return ss().getSheets().map(s => s.getName())
-    .filter(n => /^\d{4}-\d{2}-\d{2}/.test(n));
+  return sheetNamesOf().filter(function (n) { return /^\d{4}-\d{2}-\d{2}/.test(n); });
 }
 
 function rowsOf(name, book) {
@@ -881,9 +920,46 @@ function gameSummaries(names) {
   return map;
 }
 
+// よく見るページを先に作ってキャッシュに入れておく。
+// 時間主導のトリガー（例: 30分ごと）で回すと、利用者はほぼ待たずに開ける。
+function warmCache() {
+  const cache = CacheService.getScriptCache();
+  const sk = "S" + String(currentSeasonId()).slice(-10) + ":";
+  const done = [];
+  function put(key, build) {
+    try {
+      const h = build();
+      if (h && h.length < 100000) { cache.put(key, h, CACHE_TTL); rememberCacheKey(cache, key); done.push(key); }
+    } catch (e) { done.push(key + "(失敗)"); }
+  }
+  put(sk + "index", function () { return renderIndex(); });
+  put(sk + "music", function () { return renderMusic(); });
+  // 成績は既定の表示（打者・全期間・打率／投手・全期間・勝利）だけ温めておく
+  put(sk + "s:::", function () { return renderStats("bat", "", ""); });
+  put(sk + "s:pit::", function () { return renderStats("pit", "", ""); });
+  const msg = "先読みしました: " + done.join(", ");
+  Logger.log(msg);
+  return msg;
+}
+
+// 一度だけ実行: 30分ごとにページを先読みするトリガーを登録する
+function installWarmTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === "warmCache") ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger("warmCache").timeBased().everyMinutes(30).create();
+  return "30分ごとの先読みトリガーを登録しました";
+}
+function uninstallWarmTrigger() {
+  let n = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === "warmCache") { ScriptApp.deleteTrigger(t); n++; }
+  });
+  return "先読みトリガーを " + n + " 件削除しました";
+}
+
 // スプレッドシートを手で修正したあとに1回実行する。
 // 試合要約の永続キャッシュと一覧キャッシュを捨てて、次の表示で作り直させる。
-// （試合ページ・成績ページのキャッシュは最長30分で自然に切れる）
 function clearSiteCache() {
   const props = PropertiesService.getScriptProperties();
   let all = {};
@@ -895,10 +971,8 @@ function clearSiteCache() {
       try { props.deleteProperty(k); n++; } catch (e) {}
     }
   });
-  try {
-    CacheService.getScriptCache().removeAll(["index", "music", "seasonList2", "aliasData", "knownNames"]);
-  } catch (e) {}
-  const msg = "試合要約 " + n + " 件と一覧キャッシュ・シーズン一覧・名前対応表を削除しました";
+  invalidatePageCaches(); // 作り置きしたページを全部捨てる
+  const msg = "試合要約 " + n + " 件とページキャッシュ・シーズン一覧・名前対応表を削除しました";
   Logger.log(msg);
   return msg;
 }
@@ -2714,17 +2788,34 @@ function splitGames(rows) {
 }
 
 // 経過シート名に対応する成績シート（〜成績。A1に集計元の経過シート名が入っている）を返す
+// 成績シートのA1 → シート名の対応表。シートを1枚ずつ開くと遅いのでブック単位で覚えておく
+var _seisekiMapCache = {};
+function seisekiMapOf(book) {
+  const b = book || ss();
+  const id = b.getId();
+  if (_seisekiMapCache[id]) return _seisekiMapCache[id];
+  const map = {};
+  sheetNamesOf(b).forEach(function (n) {
+    if (!/成績$/.test(n)) return;
+    try {
+      const a1 = String(b.getSheetByName(n).getRange("A1").getValue());
+      if (a1 && !map[a1]) map[a1] = n;
+    } catch (e) {}
+  });
+  _seisekiMapCache[id] = map;
+  return map;
+}
+
 function seisekiSheetFor(keikaName) {
   const book = ss();
-  const sheets = book.getSheets();
   // 現行: 成績シートのA1に集計元の経過シート名が入っている
-  for (let i = 0; i < sheets.length; i++) {
-    if (!/成績$/.test(sheets[i].getName())) continue;
-    if (String(sheets[i].getRange("A1").getValue()) === keikaName) return sheets[i];
-  }
+  const hit = seisekiMapOf(book)[keikaName];
+  if (hit) return book.getSheetByName(hit);
   // 過去シーズン: A1が一致しない。全期間なら「全指標」または「シーズン通算成績」を使う
   if (keikaName === ALL_GAMES) {
-    return book.getSheetByName("全指標") || book.getSheetByName("シーズン通算成績") || null;
+    const names = sheetNamesOf(book);
+    if (names.indexOf("全指標") >= 0) return book.getSheetByName("全指標");
+    if (names.indexOf("シーズン通算成績") >= 0) return book.getSheetByName("シーズン通算成績");
   }
   return null;
 }
