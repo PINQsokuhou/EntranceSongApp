@@ -18,7 +18,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v49";
+const SITE_VER = "site v50";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -1088,7 +1088,7 @@ function renderMusic() {
         var tid = spotifyTrackId(sp);
         if (tid) {
           body += '<iframe style="border-radius:12px;margin:4px 0 8px" src="https://open.spotify.com/embed/track/' +
-            tid + '?utm_source=generator&theme=0" width="100%" height="80" frameborder="0" ' +
+            tid + '?utm_source=generator&theme=0" width="100%" height="152" frameborder="0" ' +
             'allow="autoplay;clipboard-write;encrypted-media;fullscreen;picture-in-picture" loading="lazy"></iframe>';
         }
       });
@@ -1105,7 +1105,7 @@ function renderMusic() {
         var tid = spotifyTrackId(sp);
         if (tid) {
           body += '<iframe style="border-radius:12px;margin:4px 0 8px" src="https://open.spotify.com/embed/track/' +
-            tid + '?utm_source=generator&theme=0" width="100%" height="80" frameborder="0" ' +
+            tid + '?utm_source=generator&theme=0" width="100%" height="152" frameborder="0" ' +
             'allow="autoplay;clipboard-write;encrypted-media;fullscreen;picture-in-picture" loading="lazy"></iframe>';
         }
       });
@@ -1125,7 +1125,7 @@ function renderMusic() {
         var tid = spotifyTrackId(sp);
         if (tid) {
           body += '<iframe style="border-radius:12px;margin:4px 0 8px" src="https://open.spotify.com/embed/track/' +
-            tid + '?utm_source=generator&theme=0" width="100%" height="80" frameborder="0" ' +
+            tid + '?utm_source=generator&theme=0" width="100%" height="152" frameborder="0" ' +
             'allow="autoplay;clipboard-write;encrypted-media;fullscreen;picture-in-picture" loading="lazy"></iframe>';
         }
       });
