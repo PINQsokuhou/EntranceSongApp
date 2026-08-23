@@ -18,7 +18,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v53";
+const SITE_VER = "site v54";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -525,7 +525,8 @@ function getTsText(name) {
   if (!sh || sh.getLastRow() < 2) return "";
   const v = sh.getRange(1, 1, sh.getLastRow(), 2).getValues();
   for (let r = 1; r < v.length; r++) {
-    if (String(v[r][0]) === String(name)) return String(v[r][1] || "");
+    // 日付として数値化された古い行も読めるように、キーを揃えてから比べる
+    if (tsKeyOf(v[r][0]) === String(name)) return String(v[r][1] || "");
   }
   return "";
 }
@@ -540,12 +541,54 @@ function saveTsText(name, text) {
   const keys = last >= 2 ? sh.getRange(2, 1, last - 1, 1).getValues() : [];
   let row = -1;
   for (let r = 0; r < keys.length; r++) {
-    if (String(keys[r][0]) === String(name)) { row = r + 2; break; }
+    if (tsKeyOf(keys[r][0]) === String(name)) { row = r + 2; break; }
   }
   if (row < 0) row = last + 1;
-  sh.getRange(row, 1, 1, 3).setValues([[name, text, new Date()]]);
+  // シート名（2026-08-20 など）は、そのまま書くと日付と見なされ数値になってしまう。
+  // 書式を「書式なしテキスト」にしてから入れることで文字列のまま保つ。
+  const nameCell = sh.getRange(row, 1);
+  nameCell.setNumberFormat("@").setValue(String(name));
+  sh.getRange(row, 2, 1, 2).setValues([[text, new Date()]]);
   try { CacheService.getScriptCache().remove("ts:" + name); } catch (e) {}
   return { ok: true };
+}
+
+// タイムスタンプシートのA列を試合シート名に戻す。
+// 過去に日付として数値化されてしまった行（例: 46254）も YYYY-MM-DD に読み替える。
+function tsKeyOf(v) {
+  if (v instanceof Date) return Utilities.formatDate(v, "Asia/Tokyo", "yyyy-MM-dd");
+  const s = String(v == null ? "" : v).trim();
+  if (/^\d{5}(\.0+)?$/.test(s)) { // Excel/Sheets のシリアル値
+    const base = new Date(1899, 11, 30);
+    const d = new Date(base.getTime() + parseInt(s, 10) * 86400000);
+    return Utilities.formatDate(d, "Asia/Tokyo", "yyyy-MM-dd");
+  }
+  return s;
+}
+
+// 過去に日付として数値化されてしまったタイムスタンプシートのA列を、文字列の試合シート名に直す。
+// 1回実行すれば直り、以後は書き込み時に文字列で保たれる。
+function repairTimestampSheet() {
+  const sh = ss().getSheetByName(TS_SHEET);
+  if (!sh || sh.getLastRow() < 2) return "「" + TS_SHEET + "」シートにデータがありません";
+  const last = sh.getLastRow();
+  const range = sh.getRange(2, 1, last - 1, 1);
+  const v = range.getValues();
+  const fixed = [];
+  const out = [];
+  for (let i = 0; i < v.length; i++) {
+    const before = v[i][0];
+    const key = tsKeyOf(before);
+    out.push([key]);
+    if (String(before) !== key) fixed.push(String(before) + " → " + key);
+  }
+  range.setNumberFormat("@").setValues(out);
+  try { CacheService.getScriptCache().removeAll(["index"]); } catch (e) {}
+  const msg = fixed.length
+    ? "修正しました（" + fixed.length + "件）:\n  " + fixed.join("\n  ")
+    : "修正が必要な行はありませんでした";
+  Logger.log(msg);
+  return msg;
 }
 
 // その月の月間経過シートを返す。無ければ「N月試合経過」＋「N月間成績」を新規作成
