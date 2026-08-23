@@ -18,7 +18,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v50";
+const SITE_VER = "site v51";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -1198,33 +1198,132 @@ function splitSongTitle(t) {
   return { artist: s.slice(0, i).trim(), title: s.slice(i + 1).trim() };
 }
 
-// 検索して最有力の1曲を返す { url, name, artist } / 見つからなければ null
+// 半角カタカナ → 全角カタカナ（濁点・半濁点もまとめる）
+const HANKAKU_KANA = {
+  "ｱ":"ア","ｲ":"イ","ｳ":"ウ","ｴ":"エ","ｵ":"オ","ｶ":"カ","ｷ":"キ","ｸ":"ク","ｹ":"ケ","ｺ":"コ",
+  "ｻ":"サ","ｼ":"シ","ｽ":"ス","ｾ":"セ","ｿ":"ソ","ﾀ":"タ","ﾁ":"チ","ﾂ":"ツ","ﾃ":"テ","ﾄ":"ト",
+  "ﾅ":"ナ","ﾆ":"ニ","ﾇ":"ヌ","ﾈ":"ネ","ﾉ":"ノ","ﾊ":"ハ","ﾋ":"ヒ","ﾌ":"フ","ﾍ":"ヘ","ﾎ":"ホ",
+  "ﾏ":"マ","ﾐ":"ミ","ﾑ":"ム","ﾒ":"メ","ﾓ":"モ","ﾔ":"ヤ","ﾕ":"ユ","ﾖ":"ヨ",
+  "ﾗ":"ラ","ﾘ":"リ","ﾙ":"ル","ﾚ":"レ","ﾛ":"ロ","ﾜ":"ワ","ｦ":"ヲ","ﾝ":"ン",
+  "ｧ":"ァ","ｨ":"ィ","ｩ":"ゥ","ｪ":"ェ","ｫ":"ォ","ｯ":"ッ","ｬ":"ャ","ｭ":"ュ","ｮ":"ョ","ｰ":"ー"
+};
+function hankakuKanaToZenkaku(s) {
+  let t = String(s == null ? "" : s);
+  // 濁点・半濁点つきを先に1文字へ寄せる
+  t = t.replace(/([ｶ-ﾄﾊ-ﾎｳ])ﾞ/g, function (m, c) {
+    const z = HANKAKU_KANA[c] || c;
+    return String.fromCharCode(z.charCodeAt(0) + 1);
+  });
+  t = t.replace(/([ﾊ-ﾎ])ﾟ/g, function (m, c) {
+    const z = HANKAKU_KANA[c] || c;
+    return String.fromCharCode(z.charCodeAt(0) + 2);
+  });
+  return t.replace(/[ｦ-ﾟ]/g, function (c) { return HANKAKU_KANA[c] || c; });
+}
+
+// 照合用に文字を揃える: 全角→半角、半角カナ→全角、カタカナ→ひらがな、記号や括弧書きを除去
+function normForMatch(s) {
+  let t = hankakuKanaToZenkaku(s);
+  t = t.replace(/[Ａ-Ｚａ-ｚ０-９！-～]/g, function (c) {
+    return String.fromCharCode(c.charCodeAt(0) - 0xFEE0);
+  });
+  t = t.replace(/[（(\[【].*?[）)\]】]/g, " ");        // (TV size) などの補足を落とす
+  t = t.replace(/[-−–—~〜～_,.'"`!?！？・:：;；&＆|｜/／\\]/g, " ");
+  t = t.replace(/[「」『』｢｣《》〈〉、。，．]/g, " ");   // 読点・句点なども無視する
+  t = toHiragana(t).toLowerCase();
+  return t.replace(/\s+/g, "").trim();
+}
+
+// 2文字ずつの重なり具合で似ている度合いを出す（0〜1）。日本語でもそこそこ効く
+function similarity(a, b) {
+  const x = normForMatch(a), y = normForMatch(b);
+  if (!x || !y) return 0;
+  if (x === y) return 1;
+  if (x.indexOf(y) >= 0 || y.indexOf(x) >= 0) return 0.9;
+  if (x.length < 2 || y.length < 2) return 0;
+  const grams = {};
+  let total = 0, hit = 0;
+  for (let i = 0; i < x.length - 1; i++) {
+    const g = x.substr(i, 2);
+    grams[g] = (grams[g] || 0) + 1;
+  }
+  for (let i = 0; i < y.length - 1; i++) {
+    const g = y.substr(i, 2);
+    total++;
+    if (grams[g] > 0) { grams[g]--; hit++; }
+  }
+  const denom = (x.length - 1) + total;
+  return denom ? (2 * hit) / denom : 0;
+}
+
+// 検索して最有力の1曲を返す { url, name, artist, score } / 見つからなければ null
+// 完全一致でなくても拾えるよう、条件を変えて何通りか検索し、似ている度合いで選ぶ。
 function spotifySearchTrack(token, artist, title) {
-  function query(q) {
-    const url = "https://api.spotify.com/v1/search?type=track&limit=5&market=JP&q=" + encodeURIComponent(q);
-    const res = UrlFetchApp.fetch(url, {
-      headers: { Authorization: "Bearer " + token }, muteHttpExceptions: true
+  const seen = {};
+  const candidates = [];
+
+  function query(q, useMarket) {
+    if (!q || !q.trim()) return;
+    const url = "https://api.spotify.com/v1/search?type=track&limit=10" +
+      (useMarket ? "&market=JP" : "") + "&q=" + encodeURIComponent(q);
+    let res;
+    try {
+      res = UrlFetchApp.fetch(url, {
+        headers: { Authorization: "Bearer " + token }, muteHttpExceptions: true
+      });
+    } catch (e) { return; }
+    if (res.getResponseCode() !== 200) return;
+    let j = {};
+    try { j = JSON.parse(res.getContentText() || "{}"); } catch (e) { return; }
+    const items = (j.tracks && j.tracks.items) ? j.tracks.items : [];
+    items.forEach(function (it) {
+      if (!it || !it.id || seen[it.id]) return;
+      seen[it.id] = 1;
+      candidates.push(it);
     });
-    if (res.getResponseCode() !== 200) return [];
-    const j = JSON.parse(res.getContentText() || "{}");
-    return (j.tracks && j.tracks.items) ? j.tracks.items : [];
   }
-  let items = query(artist ? (title + " " + artist) : title);
-  if (!items.length && artist) items = query(title); // 曲名だけで再検索
-  if (!items.length) return null;
-  // アーティスト名が一致するものを優先
-  const a = stripSpace(artist).toLowerCase();
-  let best = items[0];
-  if (a) {
-    for (let i = 0; i < items.length; i++) {
-      const names = (items[i].artists || []).map(function (x) { return stripSpace(x.name).toLowerCase(); });
-      if (names.some(function (n) { return n.indexOf(a) >= 0 || a.indexOf(n) >= 0; })) { best = items[i]; break; }
+
+  const t = String(title || "").trim();
+  const a = String(artist || "").trim();
+  // 括弧書きなどを落とした簡略版でも試す
+  const tPlain = t.replace(/[（(\[【].*?[）)\]】]/g, " ").replace(/\s+/g, " ").trim();
+
+  // 上から順に試し、十分な候補が集まったら打ち切る
+  const attempts = [
+    [a ? 'track:"' + t + '" artist:"' + a + '"' : "", true],
+    [a ? (t + " " + a) : t, true],
+    [a ? (t + " " + a) : t, false],
+    [tPlain !== t ? (a ? tPlain + " " + a : tPlain) : "", false],
+    [t, false],
+    [tPlain !== t ? tPlain : "", false]
+  ];
+  for (let i = 0; i < attempts.length; i++) {
+    if (candidates.length >= 10) break;
+    query(attempts[i][0], attempts[i][1]);
+  }
+  if (!candidates.length) return null;
+
+  // 曲名の近さを重く、アーティストの近さを軽く見て点数化
+  let best = null, bestScore = -1;
+  candidates.forEach(function (it) {
+    const ts = similarity(t, it.name);
+    let as = 0;
+    if (a) {
+      (it.artists || []).forEach(function (x) {
+        const s = similarity(a, x.name);
+        if (s > as) as = s;
+      });
     }
-  }
+    const score = a ? (ts * 0.7 + as * 0.3) : ts;
+    if (score > bestScore) { bestScore = score; best = it; }
+  });
+  if (!best) return null;
+
   return {
     url: "https://open.spotify.com/track/" + best.id,
     name: best.name,
-    artist: (best.artists || []).map(function (x) { return x.name; }).join(", ")
+    artist: (best.artists || []).map(function (x) { return x.name; }).join(", "),
+    score: Math.round(bestScore * 100) / 100
   };
 }
 
@@ -1262,13 +1361,23 @@ function fillSpotifyLinksCore(dryRun) {
         return;
       }
       filled++;
-      log.push("○ " + name + " " + p.label + " : " + raw + "  →  " + hit.artist + " / " + hit.name);
-      writes.push({ row: r + 1, col: p.url + 1, url: hit.url });
+      // 似ている度合いが低いものは目印を付けて、あとで見直せるようにする
+      const mark = (hit.score != null && hit.score < 0.6) ? "△ 要確認" : "○";
+      log.push(mark + " " + name + " " + p.label + " : " + raw + "  →  " +
+        hit.artist + " / " + hit.name + "（一致度 " + (hit.score != null ? hit.score : "-") + "）");
+      writes.push({ row: r + 1, col: p.url + 1, url: hit.url, hit: hit });
     });
   }
 
   if (!dryRun) {
-    writes.forEach(function (w) { sh.getRange(w.row, w.col).setValue(w.url); });
+    writes.forEach(function (w) {
+      const cell = sh.getRange(w.row, w.col);
+      cell.setValue(w.url);
+      const h = w.hit;
+      cell.setNote((h.score != null && h.score < 0.6 ? "【要確認】" : "") +
+        "自動取得: " + h.artist + " / " + h.name +
+        (h.score != null ? "（一致度 " + h.score + "）" : ""));
+    });
     try { CacheService.getScriptCache().remove("music"); } catch (e) {}
   }
 
@@ -1646,7 +1755,12 @@ function applyFormResponse(get, dryRun) {
       const pair = spotifyColPairs().filter(function (p) { return p.title === col; })[0];
       if (pair) {
         const urlCell = sh.getRange(row, pair.url + 1);
-        if (spot) { urlCell.setValue(spot.url); urlCell.setNote("自動取得: " + spot.artist + " / " + spot.name); }
+        if (spot) {
+          urlCell.setValue(spot.url);
+          urlCell.setNote((spot.score != null && spot.score < 0.6 ? "【要確認】" : "") +
+            "自動取得: " + spot.artist + " / " + spot.name +
+            (spot.score != null ? "（一致度 " + spot.score + "）" : ""));
+        }
         else { urlCell.clearContent(); urlCell.setNote("Spotifyで見つかりませんでした: " + titleCell); }
       }
     }
@@ -1722,7 +1836,9 @@ function onEditRoster(e) {
       try { hit = spotifySearchTrack(spotifyToken(), sp.artist, sp.title); } catch (err) { hit = null; }
       if (hit) {
         urlCell.setValue(hit.url);
-        urlCell.setNote("自動取得: " + hit.artist + " / " + hit.name);
+        urlCell.setNote((hit.score != null && hit.score < 0.6 ? "【要確認】" : "") +
+          "自動取得: " + hit.artist + " / " + hit.name +
+          (hit.score != null ? "（一致度 " + hit.score + "）" : ""));
       } else {
         urlCell.clearContent();
         urlCell.setNote("Spotifyで見つかりませんでした: " + raw);
