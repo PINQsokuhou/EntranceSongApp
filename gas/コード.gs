@@ -20,7 +20,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v55";
+const SITE_VER = "site v56";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -1828,35 +1828,40 @@ function uninstallFormTrigger() {
 
 // 質問名（見出し）から回答を引く。フォームを作り直して列がずれても影響を受けない
 function pickNamed(named, keywords) {
+  // フォームを作り直すと回答シートに古い列が残り、同じ見出しが複数できる。
+  // 一致したものの中から「値が入っているもの」を選び、複数あれば新しい列（後ろ）を優先する。
+  let found = "";
   for (const k in named) {
     const kk = stripSpace(k);
+    let match = false;
     for (let i = 0; i < keywords.length; i++) {
-      if (kk.indexOf(keywords[i]) >= 0) {
-        const v = named[k];
-        const s = Array.isArray(v) ? v.join(" ") : v;
-        return String(s == null ? "" : s).trim();
-      }
+      if (kk.indexOf(keywords[i]) >= 0) { match = true; break; }
     }
+    if (!match) continue;
+    const v = named[k];
+    const s = String((Array.isArray(v) ? v.join(" ") : v) == null ? "" : (Array.isArray(v) ? v.join(" ") : v)).trim();
+    if (s) found = s;
   }
-  return "";
+  return found;
 }
 
 // シートの見出し＋値から引く（namedValues が使えないとき用）
 function makeHeaderGetter(headers, values) {
   return function (keywords) {
-    // 同じ見出しが複数あるときは、値が入っている方を優先する（作り直しで古い列が残るため）
-    let fallback = "";
+    // 同じ見出しが複数あるときは、値が入っているものを選び、
+    // 複数あれば新しい列（右側）を優先する（作り直しで古い列が左に残るため）
+    let found = "";
     for (let i = 0; i < headers.length; i++) {
       const h = stripSpace(headers[i]);
+      let match = false;
       for (let k = 0; k < keywords.length; k++) {
-        if (h.indexOf(keywords[k]) >= 0) {
-          const v = String(values[i] == null ? "" : values[i]).trim();
-          if (v) return v;
-          if (!fallback) fallback = "";
-        }
+        if (h.indexOf(keywords[k]) >= 0) { match = true; break; }
       }
+      if (!match) continue;
+      const v = String(values[i] == null ? "" : values[i]).trim();
+      if (v) found = v;
     }
-    return fallback;
+    return found;
   };
 }
 
