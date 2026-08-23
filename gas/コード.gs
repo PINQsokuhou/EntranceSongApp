@@ -18,7 +18,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v40";
+const SITE_VER = "site v41";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -1180,6 +1180,84 @@ function fillSpotifyLinksCore(dryRun) {
 function fillSpotifyLinksDryRun() { return fillSpotifyLinksCore(true); }
 // 空欄のセルにSpotifyのURLを書き込む
 function fillSpotifyLinks() { return fillSpotifyLinksCore(false); }
+
+// ---------------- 曲名を書き換えたら Spotify リンクを自動更新 ----------------
+// 一度だけ installSpotifyAutoUpdate() を実行するとトリガーが登録され、
+// 以後は楽曲登録シートの曲名セルを編集するたびに、対応するSpotify URLが入れ替わる。
+// （UrlFetchApp を使うため、簡易トリガーではなくインストール型トリガーが必要）
+
+function installSpotifyAutoUpdate() {
+  const bookId = rosterBook().getId();
+  // 同じハンドラの古いトリガーは消してから作り直す（二重登録の防止）
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === "onEditRoster") ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger("onEditRoster").forSpreadsheet(bookId).onEdit().create();
+  return "曲名の編集でSpotifyリンクを自動更新するトリガーを登録しました（対象: " + ROSTER_SHEET + " シート）";
+}
+
+function uninstallSpotifyAutoUpdate() {
+  let n = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === "onEditRoster") { ScriptApp.deleteTrigger(t); n++; }
+  });
+  return "自動更新トリガーを " + n + " 件削除しました";
+}
+
+function onEditRoster(e) {
+  try {
+    if (!e || !e.range) return;
+    const sh = e.range.getSheet();
+    if (sh.getName() !== ROSTER_SHEET) return;
+
+    // 編集された範囲のうち、曲名列にあたるセルだけを拾う
+    const pairs = spotifyColPairs();
+    const byTitleCol = {};
+    pairs.forEach(function (p) { byTitleCol[p.title + 1] = p; }); // 1始まりの列番号で引く
+
+    const r0 = e.range.getRow(), c0 = e.range.getColumn();
+    const nRow = e.range.getNumRows(), nCol = e.range.getNumColumns();
+    const targets = [];
+    for (let dc = 0; dc < nCol; dc++) {
+      const p = byTitleCol[c0 + dc];
+      if (!p) continue;
+      for (let dr = 0; dr < nRow; dr++) targets.push({ row: r0 + dr, pair: p });
+    }
+    if (!targets.length) return;
+
+    let touched = false;
+    targets.forEach(function (t) {
+      // 名前がある行だけが曲名行（下のURL行は対象外）
+      const name = stripSpace(sh.getRange(t.row, 1).getValue());
+      if (!name) return;
+      const raw = String(sh.getRange(t.row, t.pair.title + 1).getValue() || "").trim();
+      const urlCell = sh.getRange(t.row, t.pair.url + 1);
+
+      if (!raw || /^https?:/.test(raw)) { // 曲名が消えた → リンクも消す
+        urlCell.clearContent();
+        urlCell.clearNote();
+        touched = true;
+        return;
+      }
+      const sp = splitSongTitle(raw);
+      let hit = null;
+      try { hit = spotifySearchTrack(spotifyToken(), sp.artist, sp.title); } catch (err) { hit = null; }
+      if (hit) {
+        urlCell.setValue(hit.url);
+        urlCell.setNote("自動取得: " + hit.artist + " / " + hit.name);
+      } else {
+        urlCell.clearContent();
+        urlCell.setNote("Spotifyで見つかりませんでした: " + raw);
+      }
+      touched = true;
+    });
+
+    // 登場曲ページのキャッシュを消して、サイトにすぐ反映されるようにする
+    if (touched) { try { CacheService.getScriptCache().remove("music"); } catch (err) {} }
+  } catch (err) {
+    Logger.log("onEditRoster エラー: " + err);
+  }
+}
 
 // ---------------- 楽曲登録シートのひな型作成 ----------------
 // エディタでこの関数（createRosterTemplate）を選んで実行すると、
