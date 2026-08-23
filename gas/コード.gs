@@ -18,7 +18,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v43";
+const SITE_VER = "site v44";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -1217,6 +1217,44 @@ const SCENE_CHOICES = [
   "1打席目専用曲", "チャンス曲", "負け/引き分けチャンス曲"
 ];
 
+// 事前チェック: スクリプトを動かすアカウントが、必要なファイルすべてに触れるか確認する。
+// フォームとスプレッドシートのオーナーが違う場合は、ここで足りない権限が分かる。
+function checkAccess() {
+  const me = Session.getEffectiveUser().getEmail();
+  const out = ["スクリプトを実行しているアカウント: " + (me || "(取得できません)"), ""];
+  function tryIt(label, fn) {
+    try {
+      const r = fn();
+      out.push("○ " + label + " : " + r);
+    } catch (e) {
+      out.push("× " + label + " : " + String(e).slice(0, 160));
+    }
+  }
+  tryIt("試合記録スプレッドシート（バインド先）", function () {
+    return boundBook().getName();
+  });
+  tryIt("名簿スプレッドシート（ROSTER_SS_ID）", function () {
+    const b = rosterBook();
+    return b.getName() + " / 「" + ROSTER_SHEET + "」シート " +
+      (b.getSheetByName(ROSTER_SHEET) ? "あり" : "なし");
+  });
+  tryIt("フォーム（書き込み可能か）", function () {
+    const f = FormApp.openById(SONG_FORM_ID);
+    return f.getTitle() + " / 質問数 " + f.getItems().length;
+  });
+  tryIt("回答スプレッドシート（FORM_SS_ID）", function () {
+    const s = SpreadsheetApp.openById(FORM_SS_ID);
+    return s.getName() + " / 回答 " + Math.max(0, s.getSheets()[0].getLastRow() - 1) + " 件";
+  });
+  tryIt("メール送信", function () {
+    return "残り送信可能数 " + MailApp.getRemainingDailyQuota() + " 通（通知先: " +
+      (NOTIFY_EMAIL || me) + "）";
+  });
+  const msg = out.join("\n");
+  Logger.log(msg);
+  return msg;
+}
+
 // 一度実行すると、登場曲フォームを自動反映しやすい形に作り直す。
 // 名前はプルダウン（名簿から自動生成）、アーティスト名を独立させ、使う場面を選択式にする。
 // 既存の回答は消えないが、質問が変わるので回答シートには新しい列が追加される。
@@ -1259,7 +1297,8 @@ function rebuildSongForm() {
   return "フォームを作り直しました（名前の選択肢 " + members.length + "人）。\n" +
     "編集URL: " + form.getEditUrl() + "\n回答URL: " + form.getPublishedUrl();
 }
-// 通知メールの宛先（空ならスクリプト実行者のアドレスに送る）
+// 通知メールの宛先。空だとスクリプトを動かすアカウント宛になるので、
+// 受け取りたいアドレスが別ならここに書く（例: "you@example.com"）
 const NOTIFY_EMAIL = "";
 
 // 「使う場面」の回答 → 楽曲登録シートの列（0始まり）
