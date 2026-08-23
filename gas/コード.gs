@@ -18,7 +18,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v41";
+const SITE_VER = "site v42";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -1202,6 +1202,201 @@ function uninstallSpotifyAutoUpdate() {
     if (t.getHandlerFunction() === "onEditRoster") { ScriptApp.deleteTrigger(t); n++; }
   });
   return "自動更新トリガーを " + n + " 件削除しました";
+}
+
+// ---------------- フォーム送信 → 楽曲登録シートへ自動反映 ----------------
+// フォームの回答スプレッドシートID（回答が溜まるシート）
+const FORM_SS_ID = "1cIP5pOwvZtQm015aWpNjtOipvoE7gDH3Ki7-ID6EVkw";
+// 通知メールの宛先（空ならスクリプト実行者のアドレスに送る）
+const NOTIFY_EMAIL = "";
+
+// 「使う場面」の回答 → 楽曲登録シートの列（0始まり）
+function sceneToColumn(scene) {
+  const s = stripSpace(scene);
+  if (!s) return -1;
+  let m = s.match(/^打席曲([1-6１-６])/);
+  if (m) return 4 + "123456".indexOf(toHalf(m[1]));
+  m = s.match(/^投手曲([1-3１-３])/);
+  if (m) return 10 + "123".indexOf(toHalf(m[1]));
+  if (s.indexOf("名前アナウンス") >= 0) return 13;
+  if (s.indexOf("1打席目") >= 0 || s.indexOf("１打席目") >= 0) return 14;
+  if (s.indexOf("負け") >= 0 || s.indexOf("引き分け") >= 0) return 16; // 「負け…チャンス曲」を先に判定
+  if (s.indexOf("チャンス") >= 0) return 15;
+  return -1;
+}
+function toHalf(c) {
+  const i = "１２３４５６".indexOf(c);
+  return i >= 0 ? "123456".charAt(i) : c;
+}
+function columnLabelOf(col) {
+  if (col >= 4 && col <= 9) return "打席曲" + (col - 3);
+  if (col >= 10 && col <= 12) return "投手曲" + (col - 9);
+  if (col === 13) return "名前アナウンス";
+  if (col === 14) return "1打席目専用曲";
+  if (col === 15) return "チャンス曲";
+  if (col === 16) return "負け/引き分けチャンス曲";
+  return "列" + col;
+}
+
+// 見出しにキーワードを含む列を探す（質問文を多少変えても動くように）
+function findHeaderCol(headers, keywords) {
+  for (let i = 0; i < headers.length; i++) {
+    const h = stripSpace(headers[i]);
+    for (let k = 0; k < keywords.length; k++) {
+      if (h.indexOf(keywords[k]) >= 0) return i;
+    }
+  }
+  return -1;
+}
+
+// 一度だけ実行: フォーム送信時に自動反映するトリガーを登録する
+function installFormTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === "onRosterFormSubmit") ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger("onRosterFormSubmit").forSpreadsheet(FORM_SS_ID).onFormSubmit().create();
+  return "フォーム送信時の自動反映トリガーを登録しました";
+}
+function uninstallFormTrigger() {
+  let n = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === "onRosterFormSubmit") { ScriptApp.deleteTrigger(t); n++; }
+  });
+  return "フォーム送信トリガーを " + n + " 件削除しました";
+}
+
+// 直近の回答1件で動作を試す（トリガーを待たずに確認できる）
+function testLatestFormResponse() {
+  const sh = SpreadsheetApp.openById(FORM_SS_ID).getSheets()[0];
+  const last = sh.getLastRow();
+  if (last < 2) return "回答がありません";
+  const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+  const values = sh.getRange(last, 1, 1, sh.getLastColumn()).getValues()[0];
+  return applyFormResponse(headers, values, true);
+}
+
+function onRosterFormSubmit(e) {
+  try {
+    const sh = SpreadsheetApp.openById(FORM_SS_ID).getSheets()[0];
+    const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+    const values = (e && e.values) ? e.values
+      : sh.getRange(sh.getLastRow(), 1, 1, sh.getLastColumn()).getValues()[0];
+    applyFormResponse(headers, values, false);
+  } catch (err) {
+    Logger.log("onRosterFormSubmit エラー: " + err);
+    try {
+      MailApp.sendEmail(NOTIFY_EMAIL || Session.getEffectiveUser().getEmail(),
+        "【登場曲フォーム】自動反映でエラー", String(err));
+    } catch (e2) {}
+  }
+}
+
+// 回答1件を楽曲登録シートへ反映し、結果をメール通知する
+function applyFormResponse(headers, values, dryRun) {
+  const cName = findHeaderCol(headers, ["名前", "フルネーム"]);
+  const cSong = findHeaderCol(headers, ["曲名"]);
+  const cArtist = findHeaderCol(headers, ["アーティスト"]);
+  const cScene = findHeaderCol(headers, ["場面", "使う枠", "どの曲"]);
+  const cPart = findHeaderCol(headers, ["箇所"]);
+  const cNote = findHeaderCol(headers, ["備考"]);
+
+  const rawName = cName >= 0 ? values[cName] : "";
+  const song = cSong >= 0 ? String(values[cSong] || "").trim() : "";
+  const artist = cArtist >= 0 ? String(values[cArtist] || "").trim() : "";
+  const scene = cScene >= 0 ? String(values[cScene] || "").trim() : "";
+  const part = cPart >= 0 ? String(values[cPart] || "").trim() : "";
+  const note = cNote >= 0 ? String(values[cNote] || "").trim() : "";
+
+  const name = normName(rawName);
+  const lines = [];
+  lines.push("回答者: " + rawName + (name !== stripSpace(rawName) ? "（→ " + name + " として処理）" : ""));
+  lines.push("曲: " + (artist ? artist + " / " : "") + song);
+  lines.push("使う場面: " + (scene || "（未指定）"));
+  if (part) lines.push("使いたい箇所: " + part);
+  if (note) lines.push("備考: " + note);
+  lines.push("");
+
+  const book = rosterBook();
+  const sh = book.getSheetByName(ROSTER_SHEET);
+  if (!sh) return notifyForm("反映できませんでした", lines.concat(["「" + ROSTER_SHEET + "」シートが見つかりません"]), dryRun);
+
+  // 名前の行を探す（名前がある行＝曲名行）
+  const lastRow = sh.getLastRow();
+  const names = sh.getRange(1, 1, lastRow, 1).getValues();
+  let row = -1;
+  for (let r = 1; r < names.length; r++) {
+    if (normName(names[r][0]) === name && name) { row = r + 1; break; }
+  }
+  if (row < 0) {
+    return notifyForm("要対応: 名簿に見つかりません", lines.concat([
+      "楽曲登録シートに「" + name + "」の行がありません。",
+      "名簿に追加するか、選手別名シートに別名を登録してください。"]), dryRun);
+  }
+
+  // 使う場面 → 列
+  let col = sceneToColumn(scene);
+  let autoAssigned = false;
+  if (col < 0) {
+    // 未指定なら、空いている打席曲の枠を自動で割り当てる
+    const cur = sh.getRange(row, 1, 1, 17).getValues()[0];
+    for (let c = 4; c <= 9; c++) {
+      if (!String(cur[c] || "").trim()) { col = c; autoAssigned = true; break; }
+    }
+  }
+  if (col < 0) {
+    return notifyForm("要対応: 枠を決められません", lines.concat([
+      "「使う場面」が未指定で、打席曲1〜6も全て埋まっています。手動で枠を決めてください。"]), dryRun);
+  }
+
+  const label = columnLabelOf(col);
+  const titleCell = artist ? (artist + "/" + song) : song;
+  lines.push("反映先: " + name + " の「" + label + "」" +
+    (autoAssigned ? "（未指定のため空き枠を自動割当）" : ""));
+
+  // Spotify検索
+  let spot = null;
+  try { spot = spotifySearchTrack(spotifyToken(), artist, song); } catch (err) { spot = null; }
+
+  if (!dryRun) {
+    sh.getRange(row, col + 1).setValue(titleCell);
+    if (col !== 13) { // 名前アナウンスにはSpotify欄が無い
+      const pair = spotifyColPairs().filter(function (p) { return p.title === col; })[0];
+      if (pair) {
+        const urlCell = sh.getRange(row, pair.url + 1);
+        if (spot) { urlCell.setValue(spot.url); urlCell.setNote("自動取得: " + spot.artist + " / " + spot.name); }
+        else { urlCell.clearContent(); urlCell.setNote("Spotifyで見つかりませんでした: " + titleCell); }
+      }
+    }
+    try { CacheService.getScriptCache().remove("music"); } catch (err) {}
+  }
+
+  lines.push("Spotify: " + (spot ? (spot.artist + " / " + spot.name + "  " + spot.url) : "見つかりませんでした（手動で貼ってください）"));
+  lines.push("");
+  lines.push("▼ あなたの作業");
+  lines.push("音源をDriveに置き、そのURLを次のセルに貼ってください:");
+  lines.push("　シート「" + ROSTER_SHEET + "」の " + (row + 1) + " 行目 / " + colLetter(col) + " 列（" + label + "のURL行）");
+  lines.push(book.getUrl());
+
+  return notifyForm("反映しました: " + name + " " + label, lines, dryRun);
+}
+
+// 0始まりの列番号 → A1形式の列名
+function colLetter(col) {
+  let s = "", i = col + 1;
+  while (i > 0) { const r = (i - 1) % 26; s = String.fromCharCode(65 + r) + s; i = Math.floor((i - 1) / 26); }
+  return s;
+}
+
+function notifyForm(subject, lines, dryRun) {
+  const body = lines.join("\n");
+  Logger.log("[" + subject + "]\n" + body);
+  if (!dryRun) {
+    try {
+      MailApp.sendEmail(NOTIFY_EMAIL || Session.getEffectiveUser().getEmail(),
+        "【登場曲】" + subject, body);
+    } catch (e) { Logger.log("メール送信に失敗: " + e); }
+  }
+  return subject + "\n" + body;
 }
 
 function onEditRoster(e) {
