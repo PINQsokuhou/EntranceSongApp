@@ -20,7 +20,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v56";
+const SITE_VER = "site v57";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -54,6 +54,7 @@ const PBLOCK_COL = 30; // AD列
 
 function doGet(e) {
   const p = (e && e.parameter) ? e.parameter : {};
+  rememberSiteUrl(); // Webアクセス時だけ正しい /exec が取れるので控えておく
   if (p.action === "roster") return json(getRoster());
   if (p.action === "song") return json(getSong(p.id));
 
@@ -109,10 +110,36 @@ function doGet(e) {
   // Cookieが送られないためGoogleの多重ログイン問題を回避できる。
   // 自身のexec URLを取り除き、リンクをラッパー相対（?view=...）に変換して素のHTMLを返す
   if (p.raw === "1") {
-    const u = ScriptApp.getService().getUrl();
-    return ContentService.createTextOutput(h.split(u).join(""));
+    // 公開URL（/exec）と、万一混ざった開発URL（/dev）の両方を取り除いて相対リンクにする
+    let out = h;
+    const urls = [siteUrl(), ScriptApp.getService().getUrl()];
+    urls.forEach(function (u) { if (u) out = out.split(u).join(""); });
+    return ContentService.createTextOutput(out);
   }
   return htmlOut(h);
+}
+
+// ---- 公開URLの記憶 ----
+// ScriptApp.getService().getUrl() は実行の仕方で戻り値が変わる。
+//   Webアクセス中 … https://.../exec（公開URL・正しい）
+//   トリガーやエディタ実行 … https://.../dev（編集権限がある人しか開けない）
+// 先読みで作ったページに /dev が焼き付くとリンクが開けなくなるため、
+// Webアクセス時の /exec を控えておき、ページ生成では常にそれを使う。
+function rememberSiteUrl() {
+  try {
+    const u = ScriptApp.getService().getUrl();
+    if (u && u.indexOf("/exec") >= 0) {
+      const props = PropertiesService.getScriptProperties();
+      if (props.getProperty("SITE_EXEC_URL") !== u) props.setProperty("SITE_EXEC_URL", u);
+    }
+  } catch (e) {}
+}
+function siteUrl() {
+  try {
+    const saved = PropertiesService.getScriptProperties().getProperty("SITE_EXEC_URL");
+    if (saved) return saved;
+  } catch (e) {}
+  try { return ScriptApp.getService().getUrl() || ""; } catch (e) { return ""; }
 }
 
 // キャッシュにあれば返し、無ければ生成して保存（100KB未満のみ保存）。
@@ -923,6 +950,14 @@ function gameSummaries(names) {
 // よく見るページを先に作ってキャッシュに入れておく。
 // 時間主導のトリガー（例: 30分ごと）で回すと、利用者はほぼ待たずに開ける。
 function warmCache() {
+  // 公開URL（/exec）が分かっていないと、リンクに開発URLが焼き付いて開けなくなる。
+  // 一度も誰もサイトを開いていないときは何もしない（次に誰かが開けば記録される）。
+  const u = siteUrl();
+  if (!u || u.indexOf("/exec") < 0) {
+    const m = "公開URLが未取得のため先読みを中止しました。一度サイトを開いてから再実行してください。";
+    Logger.log(m);
+    return m;
+  }
   const cache = CacheService.getScriptCache();
   const sk = "S" + String(currentSeasonId()).slice(-10) + ":";
   const done = [];
@@ -1123,7 +1158,7 @@ function recStr(rec, name) {
 // ---------------- 登場曲紹介ページ ----------------
 
 function renderMusic() {
-  const url = ScriptApp.getService().getUrl();
+  const url = siteUrl();
   let book, sh;
   try {
     book = ROSTER_SS_ID ? SpreadsheetApp.openById(ROSTER_SS_ID) : ss();
@@ -2986,7 +3021,7 @@ function careerPitDefs() {
 }
 
 function renderPlayer(nameRaw, period) {
-  const url = ScriptApp.getService().getUrl();
+  const url = siteUrl();
   // 古い表記のリンク（冨高など）で来ても正式名のページを開けるように正規化する
   const name = normName(nameRaw);
   // 期間（統一セレクタ: 今シーズン通算/今シーズンn月/全シーズン通算/過去シーズン）
@@ -3136,7 +3171,7 @@ function renderPlayer(nameRaw, period) {
 }
 
 function renderStats(type, statId, period) {
-  const url = ScriptApp.getService().getUrl();
+  const url = siteUrl();
   const isBat = type !== "pit";
   const defs = isBat ? BAT_RANK : PIT_RANK;
   const def = defs.filter(d => d.id === statId)[0] || defs[0];
@@ -3311,7 +3346,7 @@ function page(title, body, autoRefresh) {
 }
 
 function renderIndex() {
-  const url = ScriptApp.getService().getUrl();
+  const url = siteUrl();
   // 試合一覧に出すのは試合データを持つシーズンのみ（成績のみの年度は通算専用）
   const seasons = playableSeasons();
   let body = '<h1>⚾ ピンポン野球 速報</h1>';
@@ -3374,7 +3409,7 @@ function renderGame(name) {
   const isLive = name === LIVE_SHEET;
   const rows = rowsOf(name);
   const meta = isLive ? liveMeta() : null;
-  const url = ScriptApp.getService().getUrl();
+  const url = siteUrl();
   if (rows.length === 0 && !meta) {
     return page("試合", '<p>データがありません。</p><a class="card" target="_top" href="' + url + '?' + seasonParam() + '">← 一覧へ</a>', isLive);
   }
@@ -3586,7 +3621,7 @@ function renderTsShift(name, deltaSec) {
 }
 
 function renderTs(name) {
-  const url = ScriptApp.getService().getUrl();
+  const url = siteUrl();
   const back = '<div class="top"><a target="_top" href="' + url + '?view=game&sheet=' +
     encodeURIComponent(name) + '">‹ 試合へ戻る</a></div>';
   const text = getTsText(name);
