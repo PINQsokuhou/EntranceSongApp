@@ -18,7 +18,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v45";
+const SITE_VER = "site v47";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -238,7 +238,7 @@ function aliasData() {
   const cache = CacheService.getScriptCache();
   const hit = cache.get("aliasData");
   if (hit) { try { _aliasData = JSON.parse(hit); return _aliasData; } catch (e) {} }
-  const alias = {}, full = {};
+  const alias = {}, full = {}, retired = {};
   try {
     const sh = rosterBook().getSheetByName(ALIAS_SHEET);
     if (sh && sh.getLastRow() >= 2) {
@@ -251,6 +251,7 @@ function aliasData() {
       const cOff = col("正式名", 0);
       const cFull = col("フルネーム", -1);
       const cAlias = col("別名", cFull >= 0 ? 2 : 1);
+      const cRetired = col("退団", -1);
       for (let r = 1; r < v.length; r++) {
         const official = stripSpace(v[r][cOff]);
         if (!official) continue;
@@ -265,14 +266,52 @@ function aliasData() {
             if (a && a !== official) alias[a] = official;
           });
         }
+        if (cRetired >= 0) {
+          const rv = v[r][cRetired];
+          if (rv === true || /^(true|○|◯|退団|1|yes)$/i.test(stripSpace(rv))) retired[official] = 1;
+        }
       }
     }
   } catch (e) {}
-  _aliasData = { alias: alias, full: full };
+  _aliasData = { alias: alias, full: full, retired: retired };
   try { cache.put("aliasData", JSON.stringify(_aliasData), 600); } catch (e) {}
   return _aliasData;
 }
 function aliasMap() { return aliasData().alias; }
+
+// 退団したか（選手別名シートの「退団」列で管理）
+function isRetired(name) {
+  const r = aliasData().retired || {};
+  return !!r[stripSpace(name)];
+}
+
+// カタカナ→ひらがなに揃える（あいうえお順に並べるため）
+function toHiragana(s) {
+  return String(s == null ? "" : s).replace(/[ァ-ヶ]/g, function (c) {
+    return String.fromCharCode(c.charCodeAt(0) - 0x60);
+  });
+}
+
+// 名簿（楽曲登録シート）の在籍メンバーを、フリガナのあいうえお順で返す
+// [{ name: 正式名, kana: フリガナ, display: 表示名 }]
+function rosterMembersSorted(includeRetired) {
+  const sh = rosterBook().getSheetByName(ROSTER_SHEET);
+  const out = [];
+  if (!sh || sh.getLastRow() < 2) return out;
+  const v = sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues();
+  v.forEach(function (r) {
+    const name = stripSpace(r[0]);
+    if (!name || /^https?:/i.test(name)) return;       // 名前が無い行＝URL行
+    if (!includeRetired && isRetired(name)) return;    // 退団者は除く
+    out.push({ name: name, kana: toHiragana(stripSpace(r[1])), display: displayName(name) });
+  });
+  out.sort(function (a, b) {
+    const ka = a.kana || toHiragana(a.name), kb = b.kana || toHiragana(b.name);
+    if (ka === kb) return a.name < b.name ? -1 : 1;
+    return ka < kb ? -1 : 1;
+  });
+  return out;
+}
 
 // 画面表示用の名前（フルネームが登録されていればそれを使う）
 function displayName(name) {
@@ -341,7 +380,9 @@ function setupAliasSheet() {
   let sh = book.getSheetByName(ALIAS_SHEET);
   if (!sh) sh = book.insertSheet(ALIAS_SHEET);
   sh.clear();
-  sh.getRange(1, 1, 1, 3).setValues([["正式名", "フルネーム（苗字 名前）", "別名（カンマ区切り）"]]);
+  sh.getRange(1, 1, 1, 4).setValues([
+    ["正式名", "フルネーム（苗字 名前）", "別名（カンマ区切り）", "退団（TRUEでフォームの候補から外す）"]
+  ]);
 
   // 自己紹介PDF（2026）と過去のスプレッドシートから判明しているフルネーム・表記ゆれ
   const seed = [
@@ -371,51 +412,62 @@ function setupAliasSheet() {
     ["田中", "田中 蓮", ""],
     ["石田", "石田 晃己", ""],
     ["藤田", "藤田 裕輝", "藤田裕輝"],
+    ["藤田拓", "藤田 拓登", "藤田拓登"],
     // 「谷」は2026年以降＝谷遼。谷彬は別人なので必ず別行にしておく
     ["谷遼", "谷 遼", "谷"],
-    ["谷彬", "谷 彬", ""],
+    ["谷彬", "谷 彬", "", true],
     ["野平", "野平 悠太朗", ""],
     ["金田", "金田 康希", ""],
     ["鵜飼", "鵜飼 泰佑", ""],
     ["練石", "錬石 悠太郎", "錬石"],
-    // ---- PDFに無いが過去データから判明 ----
     ["清水川", "清水川 摩紘", "清水川摩紘"],
     ["西村", "西村 匡矢", "西村匡矢"],
-    // ---- 過去メンバー（2022〜2023） ----
-    ["中村", "中村 颯冴", "中村颯冴"],
-    ["伊藤", "伊藤 諒", "伊藤諒"],
-    ["八木", "八木 俊介", "八木俊介"],
-    ["兼坂", "兼坂 太陽", "兼坂太陽"],
-    ["加藤", "加藤 弘之", "加藤弘之"],
-    ["小林", "小林 晃一良", "小林晃一良"],
-    ["山本", "山本 将人", "山本将人"],
-    ["川人", "川人 祐太", "川人祐太"],
-    ["幡谷", "幡谷 健斗", "幡谷健斗"],
-    ["栁田", "栁田 遥仁", "栁田遥仁"],
+    // ---- 過去メンバー（2022〜2023）。第4要素 true = 退団（フォームの候補に出さない）----
+    ["中村", "中村 颯冴", "中村颯冴", true],
+    ["伊藤", "伊藤 諒", "伊藤諒", true],
+    ["八木", "八木 俊介", "八木俊介", true],
+    ["兼坂", "兼坂 太陽", "兼坂太陽", true],
+    ["加藤", "加藤 弘之", "加藤弘之", true],
+    ["小林", "小林 晃一良", "小林晃一良", true],
+    ["山本", "山本 将人", "山本将人", true],
+    ["川人", "川人 祐太", "川人祐太", true],
+    ["幡谷", "幡谷 健斗", "幡谷健斗", true],
+    ["栁田", "栁田 遥仁", "栁田遥仁", true],
     // 2022年の「原田奏」は現在の「原田幸紀」とは別人。同姓で混ざらないよう別行にする
-    ["原田奏", "原田 奏", ""],
-    ["井上哲", "井上 哲", ""],
-    ["山崎真治", "山崎 真治", ""],
-    ["澤江優太朗", "澤江 優太朗", ""],
-    ["石堀朝陽", "石堀 朝陽", ""],
-    ["石山和暉", "石山 和暉", ""],
-    ["石黒遥大", "石黒 遥大", ""],
-    ["秋吉悠希", "秋吉 悠希", ""],
-    ["ﾊﾞﾙﾃﾞｽﾌﾗﾝｼｽｺ", "ﾊﾞﾙﾃﾞｽ ﾌﾗﾝｼｽｺ", ""]
+    ["原田奏", "原田 奏", "", true],
+    ["井上哲", "井上 哲", "", true],
+    ["山崎真治", "山崎 真治", "", true],
+    ["澤江優太朗", "澤江 優太朗", "", true],
+    ["石堀朝陽", "石堀 朝陽", "", true],
+    ["石山和暉", "石山 和暉", "", true],
+    ["石黒遥大", "石黒 遥大", "", true],
+    ["秋吉悠希", "秋吉 悠希", "", true],
+    ["ﾊﾞﾙﾃﾞｽﾌﾗﾝｼｽｺ", "ﾊﾞﾙﾃﾞｽ ﾌﾗﾝｼｽｺ", "", true],
+    // 2024〜2025に在籍。フルネーム不明・現在は未在籍と思われる
+    ["大寺", "", "", true],
+    ["南部", "", "", true],
+    ["大野", "", "", true],
+    ["中澤", "", "", true],
+    ["鈴木", "", "", true]
   ];
   // 名簿にいるがフルネームが分からない人は、正式名だけ入れて空欄で用意しておく
   const have = {};
   seed.forEach(function (r) { have[r[0]] = 1; });
   const K = knownNames();
   Object.keys(K).sort().forEach(function (n) {
-    if (!have[n]) seed.push([n, "", ""]);
+    if (!have[n]) seed.push([n, "", "", ""]);
+  });
+  // 4列に揃える
+  const rows4 = seed.map(function (r) {
+    return [r[0], r[1] || "", r[2] || "", r[3] === true ? true : ""];
   });
 
-  sh.getRange(2, 1, seed.length, 3).setValues(seed);
+  sh.getRange(2, 1, rows4.length, 4).setValues(rows4);
   sh.setFrozenRows(1);
   try { CacheService.getScriptCache().removeAll(["aliasData", "knownNames"]); } catch (e) {}
-  return "「" + ALIAS_SHEET + "」シートを用意しました（" + seed.length +
-    "行）。フルネーム欄が空の人は「苗字 名前」の形（半角スペース区切り）で埋めてください。";
+  return "「" + ALIAS_SHEET + "」シートを用意しました（" + rows4.length + "行）。\n" +
+    "・フルネーム欄が空の人は「苗字 名前」の形（半角スペース区切り）で埋めてください。\n" +
+    "・退団した人はD列に TRUE を入れると、フォームの名前候補から外れます。";
 }
 
 // 一度だけ実行: ロースターのスプレッドシートに「シーズン」シートを作り、現行シーズンを1行入れる
@@ -1305,17 +1357,30 @@ function checkAccess() {
   return msg;
 }
 
+// フォームに載る名前を、作り直す前に確認する
+function previewFormNames() {
+  const list = rosterMembersSorted(false);
+  const retired = rosterMembersSorted(true).filter(function (m) { return isRetired(m.name); });
+  const msg = "フォームに載る名前（" + list.length + "人・フリガナ順）:\n" +
+    list.map(function (m, i) { return "  " + (i + 1) + ". " + m.display + "（" + (m.kana || "フリガナ未登録") + "）"; }).join("\n") +
+    (retired.length ? "\n\n退団として除外（" + retired.length + "人）: " +
+      retired.map(function (m) { return m.display; }).join("、") : "") +
+    "\n\n※ ここに出ない人は「" + ROSTER_SHEET + "」シートに行が無い人です。" +
+    "\n　 曲の登録先が無いので、先に名簿へ追加してください。";
+  Logger.log(msg);
+  return msg;
+}
+
 // 一度実行すると、登場曲フォームを自動反映しやすい形に作り直す。
 // 名前はプルダウン（名簿から自動生成）、アーティスト名を独立させ、使う場面を選択式にする。
 // 既存の回答は消えないが、質問が変わるので回答シートには新しい列が追加される。
 function rebuildSongForm() {
   const form = FormApp.openById(SONG_FORM_ID);
 
-  // 名前の選択肢（名簿の登録名。フルネームが分かる人はフルネームで表示）
+  // 名前の選択肢: 名簿の在籍メンバーのみ・フリガナのあいうえお順・フルネーム表示
   const members = [];
-  Object.keys(knownNames()).sort().forEach(function (n) {
-    const d = displayName(n);
-    if (members.indexOf(d) < 0) members.push(d);
+  rosterMembersSorted(false).forEach(function (m) {
+    if (members.indexOf(m.display) < 0) members.push(m.display);
   });
   if (!members.length) throw new Error("名簿（" + ROSTER_SHEET + "シート）から名前を取得できませんでした");
 
@@ -1327,7 +1392,12 @@ function rebuildSongForm() {
     .setDescription("1曲につき1回ずつ送信してください。\n" +
       "送信すると自動で登録され、担当者に通知が届きます。");
 
-  form.addListItem().setTitle("名前").setRequired(true).setChoiceValues(members);
+  // 「その他」で自由記述もできるようにするため、プルダウンではなくラジオ形式にする
+  // （Googleフォームの仕様上、その他を付けられるのはラジオ／チェックボックスのみ）
+  form.addMultipleChoiceItem().setTitle("名前").setRequired(true)
+    .setHelpText("一覧に無い場合は「その他」に入力してください")
+    .setChoiceValues(members)
+    .showOtherOption(true);
 
   form.addTextItem().setTitle("曲名").setRequired(true)
     .setHelpText("曲のタイトルだけを入れてください（例: HANABI）");
