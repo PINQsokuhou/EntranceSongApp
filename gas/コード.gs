@@ -20,7 +20,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v57";
+const SITE_VER = "site v58";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -1625,6 +1625,43 @@ function fillSpotifyLinksCore(dryRun) {
   return head;
 }
 
+// Spotify連携の状態を確かめる。キー未設定・認証失敗・検索失敗を切り分けて表示する。
+function testSpotifySearch() {
+  const props = PropertiesService.getScriptProperties();
+  const id = props.getProperty("SPOTIFY_CLIENT_ID");
+  const secret = props.getProperty("SPOTIFY_CLIENT_SECRET");
+  const out = [];
+  out.push("SPOTIFY_CLIENT_ID: " + (id ? "設定あり（" + id.length + "文字）" : "★未設定★"));
+  out.push("SPOTIFY_CLIENT_SECRET: " + (secret ? "設定あり（" + secret.length + "文字）" : "★未設定★"));
+  if (!id || !secret) {
+    out.push("");
+    out.push("→ キーが未設定です。setSpotifyKeys に値を入れて実行するか、");
+    out.push("   cleanupProperties を実行してからスクリプトプロパティに追加してください。");
+    const m0 = out.join("\n"); Logger.log(m0); return m0;
+  }
+  let token = "";
+  try {
+    token = spotifyToken();
+    out.push("認証: 成功（トークン取得OK）");
+  } catch (e) {
+    out.push("認証: ★失敗★ " + String(e).slice(0, 200));
+    const m1 = out.join("\n"); Logger.log(m1); return m1;
+  }
+  out.push("");
+  out.push("--- 検索テスト ---");
+  [["back number", "怪盗"], ["Mr.Children", "HANABI"], ["", "暴れん坊将軍メインテーマ"]].forEach(function (c) {
+    let r = null, err = "";
+    try { r = spotifySearchTrack(token, c[0], c[1]); } catch (e) { err = String(e).slice(0, 120); }
+    const q = (c[0] ? c[0] + "/" : "") + c[1];
+    out.push("  " + q + " → " +
+      (r ? (r.artist + " / " + r.name + "（一致度 " + r.score + "）" + (r.via ? " ※" + r.via : ""))
+         : ("見つからず" + (err ? " エラー: " + err : ""))));
+  });
+  const msg = out.join("\n");
+  Logger.log(msg);
+  return msg;
+}
+
 // 書き込まずに結果だけ確認する
 function fillSpotifyLinksDryRun() { return fillSpotifyLinksCore(true); }
 // 空欄のセルにSpotifyのURLを書き込む
@@ -1987,9 +2024,13 @@ function applyFormResponse(get, dryRun) {
   lines.push("反映先: " + name + " の「" + label + "」" +
     (autoAssigned ? "（未指定のため空き枠を自動割当）" : ""));
 
-  // Spotify検索
-  let spot = null;
-  try { spot = spotifySearchTrack(spotifyToken(), artist, song); } catch (err) { spot = null; }
+  // Spotify検索（キー未設定・認証失敗と「本当に見つからない」を区別する）
+  let spot = null, spotErr = "";
+  try { spot = spotifySearchTrack(spotifyToken(), artist, song); }
+  catch (err) { spotErr = String(err && err.message ? err.message : err).slice(0, 200); }
+  const failMsg = spotErr
+    ? "Spotify連携でエラー: " + spotErr + "（testSpotifySearch で確認してください）"
+    : "Spotifyで見つかりませんでした: " + titleCell;
 
   if (!dryRun) {
     sh.getRange(row, col + 1).setValue(titleCell);
@@ -2003,13 +2044,16 @@ function applyFormResponse(get, dryRun) {
             "自動取得: " + spot.artist + " / " + spot.name +
             (spot.score != null ? "（一致度 " + spot.score + "）" : ""));
         }
-        else { urlCell.clearContent(); urlCell.setNote("Spotifyで見つかりませんでした: " + titleCell); }
+        // エラーのときは既存のリンクを消さない（手で貼ったものを守る）
+        else if (!spotErr) { urlCell.clearContent(); urlCell.setNote(failMsg); }
+        else { urlCell.setNote(failMsg); }
       }
     }
     try { CacheService.getScriptCache().remove("music"); } catch (err) {}
   }
 
-  lines.push("Spotify: " + (spot ? (spot.artist + " / " + spot.name + "  " + spot.url) : "見つかりませんでした（手動で貼ってください）"));
+  lines.push("Spotify: " + (spot ? (spot.artist + " / " + spot.name + "  " + spot.url)
+    : failMsg + "（手動で貼ってください）"));
   lines.push("");
   lines.push("▼ あなたの作業");
   lines.push("音源をDriveに置き、そのURLを次のセルに貼ってください:");
@@ -2074,13 +2118,17 @@ function onEditRoster(e) {
         return;
       }
       const sp = splitSongTitle(raw);
-      let hit = null;
-      try { hit = spotifySearchTrack(spotifyToken(), sp.artist, sp.title); } catch (err) { hit = null; }
+      let hit = null, hitErr = "";
+      try { hit = spotifySearchTrack(spotifyToken(), sp.artist, sp.title); }
+      catch (err) { hitErr = String(err && err.message ? err.message : err).slice(0, 200); }
       if (hit) {
         urlCell.setValue(hit.url);
         urlCell.setNote((hit.score != null && hit.score < 0.6 ? "【要確認】" : "") +
           "自動取得: " + hit.artist + " / " + hit.name +
           (hit.score != null ? "（一致度 " + hit.score + "）" : ""));
+      } else if (hitErr) {
+        // 連携エラーのときは既存リンクを消さない（手で貼ったものを守る）
+        urlCell.setNote("Spotify連携でエラー: " + hitErr + "（testSpotifySearch で確認してください）");
       } else {
         urlCell.clearContent();
         urlCell.setNote("Spotifyで見つかりませんでした: " + raw);
