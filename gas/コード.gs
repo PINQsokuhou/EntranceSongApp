@@ -18,7 +18,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v39";
+const SITE_VER = "site v40";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -1042,6 +1042,144 @@ function spotifyTrackId(url) {
   if (/^[a-zA-Z0-9]{22}$/.test(url.trim())) return url.trim();
   return "";
 }
+
+// ---------------- Spotifyリンクの自動入力 ----------------
+// 使い方:
+//  1) https://developer.spotify.com/dashboard でアプリを作り Client ID / Client Secret を取得
+//  2) Apps Script の「プロジェクトの設定 → スクリプト プロパティ」に次を追加
+//       SPOTIFY_CLIENT_ID     = （Client ID）
+//       SPOTIFY_CLIENT_SECRET = （Client Secret）
+//  3) エディタで fillSpotifyLinksDryRun を実行 → ログで結果を確認
+//  4) 問題なければ fillSpotifyLinks を実行 → 空欄のセルにURLを書き込む
+// 既に入っているセルは上書きしない（手で直したものを壊さないため）。
+
+// 曲名セルの列 → Spotify URL列 の対応（0始まり。renderMusic と同じ並び）
+function spotifyColPairs() {
+  const pairs = [];
+  for (let c = 4; c <= 9; c++) pairs.push({ title: c, url: 63 + (c - 4), label: "打席曲" + (c - 3) });
+  for (let c = 10; c <= 12; c++) pairs.push({ title: c, url: 69 + (c - 10), label: "投手曲" + (c - 9) });
+  const sitLabels = ["1打席目専用曲", "チャンス曲", "負け/引き分けチャンス曲"];
+  for (let s = 0; s < 3; s++) pairs.push({ title: 14 + s, url: 72 + s, label: sitLabels[s] });
+  return pairs;
+}
+
+function spotifyToken() {
+  const cache = CacheService.getScriptCache();
+  const hit = cache.get("spotifyToken");
+  if (hit) return hit;
+  const props = PropertiesService.getScriptProperties();
+  const id = props.getProperty("SPOTIFY_CLIENT_ID");
+  const secret = props.getProperty("SPOTIFY_CLIENT_SECRET");
+  if (!id || !secret) {
+    throw new Error("スクリプトプロパティに SPOTIFY_CLIENT_ID と SPOTIFY_CLIENT_SECRET を設定してください");
+  }
+  const res = UrlFetchApp.fetch("https://accounts.spotify.com/api/token", {
+    method: "post",
+    payload: { grant_type: "client_credentials" },
+    headers: { Authorization: "Basic " + Utilities.base64Encode(id + ":" + secret) },
+    muteHttpExceptions: true
+  });
+  const code = res.getResponseCode();
+  const body = JSON.parse(res.getContentText() || "{}");
+  if (code !== 200 || !body.access_token) {
+    throw new Error("Spotify認証に失敗しました (HTTP " + code + "): " + res.getContentText().slice(0, 200));
+  }
+  try { cache.put("spotifyToken", body.access_token, 3000); } catch (e) {}
+  return body.access_token;
+}
+
+// 「アーティスト/曲名」を分解する（renderMusic と同じ規則）
+function splitSongTitle(t) {
+  const s = String(t || "").trim();
+  const i = s.indexOf("/");
+  if (i < 0) return { artist: "", title: s };
+  return { artist: s.slice(0, i).trim(), title: s.slice(i + 1).trim() };
+}
+
+// 検索して最有力の1曲を返す { url, name, artist } / 見つからなければ null
+function spotifySearchTrack(token, artist, title) {
+  function query(q) {
+    const url = "https://api.spotify.com/v1/search?type=track&limit=5&market=JP&q=" + encodeURIComponent(q);
+    const res = UrlFetchApp.fetch(url, {
+      headers: { Authorization: "Bearer " + token }, muteHttpExceptions: true
+    });
+    if (res.getResponseCode() !== 200) return [];
+    const j = JSON.parse(res.getContentText() || "{}");
+    return (j.tracks && j.tracks.items) ? j.tracks.items : [];
+  }
+  let items = query(artist ? (title + " " + artist) : title);
+  if (!items.length && artist) items = query(title); // 曲名だけで再検索
+  if (!items.length) return null;
+  // アーティスト名が一致するものを優先
+  const a = stripSpace(artist).toLowerCase();
+  let best = items[0];
+  if (a) {
+    for (let i = 0; i < items.length; i++) {
+      const names = (items[i].artists || []).map(function (x) { return stripSpace(x.name).toLowerCase(); });
+      if (names.some(function (n) { return n.indexOf(a) >= 0 || a.indexOf(n) >= 0; })) { best = items[i]; break; }
+    }
+  }
+  return {
+    url: "https://open.spotify.com/track/" + best.id,
+    name: best.name,
+    artist: (best.artists || []).map(function (x) { return x.name; }).join(", ")
+  };
+}
+
+// 本体。dryRun=true なら書き込まずログだけ出す
+function fillSpotifyLinksCore(dryRun) {
+  const book = rosterBook();
+  const sh = book.getSheetByName(ROSTER_SHEET);
+  if (!sh) return "「" + ROSTER_SHEET + "」シートが見つかりません";
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return "データがありません";
+
+  const width = Math.max(75, sh.getMaxColumns());
+  const v = sh.getRange(1, 1, lastRow, width).getValues();
+  const pairs = spotifyColPairs();
+  const token = spotifyToken();
+
+  const log = [];
+  let filled = 0, skipped = 0, notFound = 0;
+  const writes = []; // {row, col, url}
+
+  for (let r = 1; r < v.length; r++) {
+    const name = stripSpace(v[r][0]);
+    if (!name) continue; // 名前が無い行はURL行なので飛ばす
+    pairs.forEach(function (p) {
+      const raw = String(v[r][p.title] || "").trim();
+      if (!raw || /^https?:/.test(raw)) return;          // 曲名が無い
+      if (String(v[r][p.url] || "").trim()) { skipped++; return; } // 既に入っている
+      const sp = splitSongTitle(raw);
+      let hit = null;
+      try { hit = spotifySearchTrack(token, sp.artist, sp.title); } catch (e) { hit = null; }
+      Utilities.sleep(120); // 連続リクエストを少し空ける
+      if (!hit) {
+        notFound++;
+        log.push("× 見つからず  " + name + " " + p.label + " : " + raw);
+        return;
+      }
+      filled++;
+      log.push("○ " + name + " " + p.label + " : " + raw + "  →  " + hit.artist + " / " + hit.name);
+      writes.push({ row: r + 1, col: p.url + 1, url: hit.url });
+    });
+  }
+
+  if (!dryRun) {
+    writes.forEach(function (w) { sh.getRange(w.row, w.col).setValue(w.url); });
+    try { CacheService.getScriptCache().remove("music"); } catch (e) {}
+  }
+
+  const head = (dryRun ? "【確認のみ・書き込みなし】" : "【書き込み完了】") +
+    " 対象 " + filled + " 件 / 見つからず " + notFound + " 件 / 既存のためスキップ " + skipped + " 件";
+  Logger.log(head + "\n" + log.join("\n"));
+  return head;
+}
+
+// 書き込まずに結果だけ確認する
+function fillSpotifyLinksDryRun() { return fillSpotifyLinksCore(true); }
+// 空欄のセルにSpotifyのURLを書き込む
+function fillSpotifyLinks() { return fillSpotifyLinksCore(false); }
 
 // ---------------- 楽曲登録シートのひな型作成 ----------------
 // エディタでこの関数（createRosterTemplate）を選んで実行すると、
