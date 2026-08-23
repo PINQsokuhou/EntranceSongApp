@@ -18,7 +18,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v44";
+const SITE_VER = "site v45";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -751,26 +751,37 @@ function rowsOf(name, book) {
 // 終了した試合の内容は変わらないので ScriptProperties に永続保存し、
 // 一覧を開くたびに全試合シート（数十枚）を読み直さないようにする。
 // これが無いとシート1枚ごとにスプレッドシートへ問い合わせが飛び、一覧の表示に十数秒かかる。
+// 保存はシーズンごとに「1プロパティ」にまとめる。試合ごとに作るとプロパティが数十個に増え、
+// スクリプトプロパティ画面が50個超で読み取り専用になってしまうため。
+function gameSummaryKey() { return "gs1:" + String(activeSeasonId()).slice(-16); }
+
 function gameSummaries(names) {
   const props = PropertiesService.getScriptProperties();
-  const pre = "gs:" + String(activeSeasonId()).slice(-10) + ":"; // シーズン別（試合名の重複対策）
-  let all = {};
-  try { all = props.getProperties(); } catch (e) { all = {}; } // 1回の呼び出しで全部読む
-  const map = {}, add = {};
+  const key = gameSummaryKey();
+  let store = {};
+  try {
+    const raw = props.getProperty(key);
+    if (raw) store = JSON.parse(raw) || {};
+  } catch (e) { store = {}; }
+
+  const map = {};
+  let dirty = false;
   names.forEach(function (n) {
-    const raw = all[pre + n];
-    if (raw) {
-      try { map[n] = JSON.parse(raw); return; } catch (e) { /* 壊れていたら作り直す */ }
-    }
+    if (store[n]) { map[n] = store[n]; return; }
     const rows = rowsOf(n);
     if (rows.length === 0) return;
     const l = lineScore(rows), tn = teamNames(rows);
     const o = { st: rows[0].stadium, f: tn.f, s: tn.s, a: l.scoreF, b: l.scoreS };
     map[n] = o;
-    add[pre + n] = JSON.stringify(o);
+    store[n] = o;
+    dirty = true;
   });
-  if (Object.keys(add).length) {
-    try { props.setProperties(add, false); } catch (e) {} // false = 既存プロパティは消さない
+  if (dirty) {
+    // 1プロパティ9KBの上限があるので、超えるようなら保存を諦める（表示は普通にできる）
+    try {
+      const json = JSON.stringify(store);
+      if (json.length < 8500) props.setProperty(key, json);
+    } catch (e) {}
   }
   return map;
 }
@@ -784,7 +795,10 @@ function clearSiteCache() {
   try { all = props.getProperties(); } catch (e) {}
   let n = 0;
   Object.keys(all).forEach(function (k) {
-    if (k.indexOf("gs:") === 0) { try { props.deleteProperty(k); n++; } catch (e) {} }
+    // 旧方式（試合ごと）と新方式（シーズンごと）の両方を掃除する
+    if (k.indexOf("gs:") === 0 || k.indexOf("gs1:") === 0) {
+      try { props.deleteProperty(k); n++; } catch (e) {}
+    }
   });
   try {
     CacheService.getScriptCache().removeAll(["index", "music", "seasonList2", "aliasData", "knownNames"]);
@@ -792,6 +806,42 @@ function clearSiteCache() {
   const msg = "試合要約 " + n + " 件と一覧キャッシュ・シーズン一覧・名前対応表を削除しました";
   Logger.log(msg);
   return msg;
+}
+
+// スクリプトプロパティ画面が「50個超で読み取り専用」になったときの掃除用。
+// 試合要約のキャッシュだけ消し、設定（APIキーなど）は残す。
+function cleanupProperties() {
+  const props = PropertiesService.getScriptProperties();
+  let all = {};
+  try { all = props.getProperties(); } catch (e) {}
+  const before = Object.keys(all).length;
+  let n = 0;
+  Object.keys(all).forEach(function (k) {
+    if (k.indexOf("gs:") === 0 || k.indexOf("gs1:") === 0) {
+      try { props.deleteProperty(k); n++; } catch (e) {}
+    }
+  });
+  const after = before - n;
+  const msg = "キャッシュ " + n + " 件を削除しました（プロパティ " + before + " → " + after + " 個）。\n" +
+    "残っているもの: " + Object.keys(props.getProperties()).join(", ");
+  Logger.log(msg);
+  return msg;
+}
+
+// Spotifyのキーを画面から追加できないときに使う。
+// ↓の "" の中にコピーしてから1回実行し、実行後は値を "" に戻しておくこと。
+function setSpotifyKeys() {
+  const CLIENT_ID = "";
+  const CLIENT_SECRET = "";
+  if (!CLIENT_ID || !CLIENT_SECRET) {
+    return "この関数の CLIENT_ID と CLIENT_SECRET に値を貼ってから実行してください";
+  }
+  PropertiesService.getScriptProperties().setProperties({
+    SPOTIFY_CLIENT_ID: CLIENT_ID.trim(),
+    SPOTIFY_CLIENT_SECRET: CLIENT_SECRET.trim()
+  }, false);
+  try { CacheService.getScriptCache().remove("spotifyToken"); } catch (e) {}
+  return "Spotifyのキーを保存しました。関数内の値は空に戻しておいてください。";
 }
 
 // 全試合経過の列レイアウト（0始まりの列番号）。過去シーズンは球場・打左右・投左右・バット種類が無く左にズレる
