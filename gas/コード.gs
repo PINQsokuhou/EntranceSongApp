@@ -18,7 +18,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v42";
+const SITE_VER = "site v43";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -1207,6 +1207,58 @@ function uninstallSpotifyAutoUpdate() {
 // ---------------- フォーム送信 → 楽曲登録シートへ自動反映 ----------------
 // フォームの回答スプレッドシートID（回答が溜まるシート）
 const FORM_SS_ID = "1cIP5pOwvZtQm015aWpNjtOipvoE7gDH3Ki7-ID6EVkw";
+// 登場曲アンケートのフォームID
+const SONG_FORM_ID = "1muu9_rZU1zZof2iHFPQ0zBj3OOEBDLjiwC9BTXF6bjg";
+
+// 「使う場面」の選択肢（この文字列がそのまま列判定に使われる）
+const SCENE_CHOICES = [
+  "打席曲1", "打席曲2", "打席曲3", "打席曲4", "打席曲5", "打席曲6",
+  "投手曲1", "投手曲2", "投手曲3",
+  "1打席目専用曲", "チャンス曲", "負け/引き分けチャンス曲"
+];
+
+// 一度実行すると、登場曲フォームを自動反映しやすい形に作り直す。
+// 名前はプルダウン（名簿から自動生成）、アーティスト名を独立させ、使う場面を選択式にする。
+// 既存の回答は消えないが、質問が変わるので回答シートには新しい列が追加される。
+function rebuildSongForm() {
+  const form = FormApp.openById(SONG_FORM_ID);
+
+  // 名前の選択肢（名簿の登録名。フルネームが分かる人はフルネームで表示）
+  const members = [];
+  Object.keys(knownNames()).sort().forEach(function (n) {
+    const d = displayName(n);
+    if (members.indexOf(d) < 0) members.push(d);
+  });
+  if (!members.length) throw new Error("名簿（" + ROSTER_SHEET + "シート）から名前を取得できませんでした");
+
+  // 既存の質問を消してから作り直す
+  const items = form.getItems();
+  for (let i = items.length - 1; i >= 0; i--) form.deleteItem(items[i]);
+
+  form.setTitle("登場曲アンケート")
+    .setDescription("1曲につき1回ずつ送信してください。\n" +
+      "送信すると自動で登録され、担当者に通知が届きます。");
+
+  form.addListItem().setTitle("名前").setRequired(true).setChoiceValues(members);
+
+  form.addTextItem().setTitle("曲名").setRequired(true)
+    .setHelpText("曲のタイトルだけを入れてください（例: HANABI）");
+
+  form.addTextItem().setTitle("アーティスト名").setRequired(true)
+    .setHelpText("例: Mr.Children　※Spotifyの自動検索に使います");
+
+  form.addListItem().setTitle("使う場面").setRequired(true)
+    .setHelpText("どの枠で流すかを選んでください")
+    .setChoiceValues(SCENE_CHOICES);
+
+  form.addTextItem().setTitle("使いたい箇所")
+    .setHelpText("例: ラスサビの冒頭から、MVの1:00〜　※音源を切り出すときの目安にします");
+
+  form.addParagraphTextItem().setTitle("備考");
+
+  return "フォームを作り直しました（名前の選択肢 " + members.length + "人）。\n" +
+    "編集URL: " + form.getEditUrl() + "\n回答URL: " + form.getPublishedUrl();
+}
 // 通知メールの宛先（空ならスクリプト実行者のアドレスに送る）
 const NOTIFY_EMAIL = "";
 
@@ -1238,17 +1290,6 @@ function columnLabelOf(col) {
   return "列" + col;
 }
 
-// 見出しにキーワードを含む列を探す（質問文を多少変えても動くように）
-function findHeaderCol(headers, keywords) {
-  for (let i = 0; i < headers.length; i++) {
-    const h = stripSpace(headers[i]);
-    for (let k = 0; k < keywords.length; k++) {
-      if (h.indexOf(keywords[k]) >= 0) return i;
-    }
-  }
-  return -1;
-}
-
 // 一度だけ実行: フォーム送信時に自動反映するトリガーを登録する
 function installFormTrigger() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
@@ -1265,6 +1306,40 @@ function uninstallFormTrigger() {
   return "フォーム送信トリガーを " + n + " 件削除しました";
 }
 
+// 質問名（見出し）から回答を引く。フォームを作り直して列がずれても影響を受けない
+function pickNamed(named, keywords) {
+  for (const k in named) {
+    const kk = stripSpace(k);
+    for (let i = 0; i < keywords.length; i++) {
+      if (kk.indexOf(keywords[i]) >= 0) {
+        const v = named[k];
+        const s = Array.isArray(v) ? v.join(" ") : v;
+        return String(s == null ? "" : s).trim();
+      }
+    }
+  }
+  return "";
+}
+
+// シートの見出し＋値から引く（namedValues が使えないとき用）
+function makeHeaderGetter(headers, values) {
+  return function (keywords) {
+    // 同じ見出しが複数あるときは、値が入っている方を優先する（作り直しで古い列が残るため）
+    let fallback = "";
+    for (let i = 0; i < headers.length; i++) {
+      const h = stripSpace(headers[i]);
+      for (let k = 0; k < keywords.length; k++) {
+        if (h.indexOf(keywords[k]) >= 0) {
+          const v = String(values[i] == null ? "" : values[i]).trim();
+          if (v) return v;
+          if (!fallback) fallback = "";
+        }
+      }
+    }
+    return fallback;
+  };
+}
+
 // 直近の回答1件で動作を試す（トリガーを待たずに確認できる）
 function testLatestFormResponse() {
   const sh = SpreadsheetApp.openById(FORM_SS_ID).getSheets()[0];
@@ -1272,16 +1347,22 @@ function testLatestFormResponse() {
   if (last < 2) return "回答がありません";
   const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
   const values = sh.getRange(last, 1, 1, sh.getLastColumn()).getValues()[0];
-  return applyFormResponse(headers, values, true);
+  return applyFormResponse(makeHeaderGetter(headers, values), true);
 }
 
 function onRosterFormSubmit(e) {
   try {
-    const sh = SpreadsheetApp.openById(FORM_SS_ID).getSheets()[0];
-    const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
-    const values = (e && e.values) ? e.values
-      : sh.getRange(sh.getLastRow(), 1, 1, sh.getLastColumn()).getValues()[0];
-    applyFormResponse(headers, values, false);
+    let get;
+    if (e && e.namedValues) {
+      get = function (keywords) { return pickNamed(e.namedValues, keywords); };
+    } else {
+      const sh = SpreadsheetApp.openById(FORM_SS_ID).getSheets()[0];
+      const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+      const values = (e && e.values) ? e.values
+        : sh.getRange(sh.getLastRow(), 1, 1, sh.getLastColumn()).getValues()[0];
+      get = makeHeaderGetter(headers, values);
+    }
+    applyFormResponse(get, false);
   } catch (err) {
     Logger.log("onRosterFormSubmit エラー: " + err);
     try {
@@ -1292,20 +1373,13 @@ function onRosterFormSubmit(e) {
 }
 
 // 回答1件を楽曲登録シートへ反映し、結果をメール通知する
-function applyFormResponse(headers, values, dryRun) {
-  const cName = findHeaderCol(headers, ["名前", "フルネーム"]);
-  const cSong = findHeaderCol(headers, ["曲名"]);
-  const cArtist = findHeaderCol(headers, ["アーティスト"]);
-  const cScene = findHeaderCol(headers, ["場面", "使う枠", "どの曲"]);
-  const cPart = findHeaderCol(headers, ["箇所"]);
-  const cNote = findHeaderCol(headers, ["備考"]);
-
-  const rawName = cName >= 0 ? values[cName] : "";
-  const song = cSong >= 0 ? String(values[cSong] || "").trim() : "";
-  const artist = cArtist >= 0 ? String(values[cArtist] || "").trim() : "";
-  const scene = cScene >= 0 ? String(values[cScene] || "").trim() : "";
-  const part = cPart >= 0 ? String(values[cPart] || "").trim() : "";
-  const note = cNote >= 0 ? String(values[cNote] || "").trim() : "";
+function applyFormResponse(get, dryRun) {
+  const rawName = get(["名前", "フルネーム"]);
+  const song = get(["曲名"]);
+  const artist = get(["アーティスト"]);
+  const scene = get(["場面", "使う枠"]);
+  const part = get(["箇所"]);
+  const note = get(["備考"]);
 
   const name = normName(rawName);
   const lines = [];
