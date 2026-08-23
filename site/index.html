@@ -23,15 +23,89 @@ if (location.search.indexOf("view=record") !== -1) {
   location.href = GAS_URL + location.search;
 }
 
-fetch(GAS_URL + (location.search ? location.search + "&raw=1" : "?raw=1"))
+// GASの応答は温まっていても1.5秒ほどかかる。前回見た内容を端末に残しておき、
+// まず即座に表示してから裏で最新を取り直す（内容が変わったときだけ差し替える）。
+var CACHE_PREFIX = "pp:";
+var CACHE_MAX_AGE = 6 * 60 * 60 * 1000; // 6時間（サーバー側のキャッシュと同じ）
+var LIVE_PARAM = "sheet=LIVE";
+
+function urlFor(search) {
+  return GAS_URL + (search ? search + "&raw=1" : "?raw=1");
+}
+function cacheKey(search) { return CACHE_PREFIX + (search || ""); }
+
+function readCache(search) {
+  try {
+    var raw = localStorage.getItem(cacheKey(search));
+    if (!raw) return null;
+    var o = JSON.parse(raw);
+    if (!o || !o.t || !o.html) return null;
+    if (Date.now() - o.t > CACHE_MAX_AGE) return null;
+    return o.html;
+  } catch (e) { return null; }
+}
+function writeCache(search, html) {
+  try {
+    localStorage.setItem(cacheKey(search), JSON.stringify({ t: Date.now(), html: html }));
+  } catch (e) {
+    // 容量オーバー時は古いものを捨ててから諦める
+    try {
+      for (var i = localStorage.length - 1; i >= 0; i--) {
+        var k = localStorage.key(i);
+        if (k && k.indexOf(CACHE_PREFIX) === 0) localStorage.removeItem(k);
+      }
+    } catch (e2) {}
+  }
+}
+
+function show(html) {
+  document.open();
+  document.write(html);
+  document.close();
+}
+
+// 表示中のページから辿れるリンクを先に取ってきて、次の1クリックを速くする
+function prefetchLinks(html) {
+  try {
+    var re = /href="\?([^"]*)"/g, m, seen = {}, list = [];
+    while ((m = re.exec(html)) && list.length < 4) {
+      var s = "?" + m[1].replace(/&amp;/g, "&");
+      if (seen[s] || s.indexOf(LIVE_PARAM) !== -1) continue;
+      seen[s] = 1;
+      if (!readCache(s)) list.push(s);
+    }
+    list.forEach(function (s) {
+      fetch(urlFor(s)).then(function (r) { return r.text(); })
+        .then(function (t) { if (t && t.indexOf("<") === 0) writeCache(s, t); })
+        .catch(function () {});
+    });
+  } catch (e) {}
+}
+
+var search = location.search;
+var isLive = search.indexOf(LIVE_PARAM) !== -1; // 試合中の速報は常に最新を取る
+var cachedHtml = isLive ? null : readCache(search);
+var shown = false;
+
+if (cachedHtml) {
+  show(cachedHtml);          // まず即表示（体感はほぼ0秒）
+  shown = true;
+}
+
+fetch(urlFor(search))
   .then(function (r) { return r.text(); })
   .then(function (t) {
-    document.open();
-    document.write(t);
-    document.close();
+    if (!t || t.indexOf("<") !== 0) throw new Error("bad response");
+    if (!isLive) writeCache(search, t);
+    // 先に出した内容と同じなら書き換えない（ちらつき防止）
+    if (!shown) { show(t); shown = true; }
+    else if (t !== cachedHtml) { show(t); }
+    prefetchLinks(t);
   })
   .catch(function () {
-    document.body.textContent = "読み込みに失敗しました。通信環境を確認して再読み込みしてください。";
+    if (!shown) {
+      document.body.textContent = "読み込みに失敗しました。通信環境を確認して再読み込みしてください。";
+    }
   });
 </script>
 </body>
