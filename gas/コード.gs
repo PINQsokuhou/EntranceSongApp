@@ -20,7 +20,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v58";
+const SITE_VER = "site v59";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -1472,6 +1472,7 @@ function guessSpotifyTitles(artist, title) {
 function spotifySearchTrack(token, artist, title) {
   const seen = {};
   const candidates = [];
+  let lastErr = ""; // 検索APIが失敗した理由（握りつぶすと原因が分からなくなる）
 
   function query(q, useMarket) {
     if (!q || !q.trim()) return;
@@ -1482,10 +1483,13 @@ function spotifySearchTrack(token, artist, title) {
       res = UrlFetchApp.fetch(url, {
         headers: { Authorization: "Bearer " + token }, muteHttpExceptions: true
       });
-    } catch (e) { return; }
-    if (res.getResponseCode() !== 200) return;
+    } catch (e) { lastErr = "通信エラー: " + e; return; }
+    if (res.getResponseCode() !== 200) {
+      lastErr = "HTTP " + res.getResponseCode() + " " + (res.getContentText() || "").slice(0, 150);
+      return;
+    }
     let j = {};
-    try { j = JSON.parse(res.getContentText() || "{}"); } catch (e) { return; }
+    try { j = JSON.parse(res.getContentText() || "{}"); } catch (e) { lastErr = "応答の解析に失敗"; return; }
     const items = (j.tracks && j.tracks.items) ? j.tracks.items : [];
     items.forEach(function (it) {
       if (!it || !it.id || seen[it.id]) return;
@@ -1552,7 +1556,11 @@ function spotifySearchTrack(token, artist, title) {
       }
     });
   }
-  if (!picked.item) return null;
+  // APIがエラーを返していたなら「見つからない」ではなく障害として知らせる
+  if (!picked.item) {
+    if (lastErr) throw new Error("Spotify検索エラー: " + lastErr);
+    return null;
+  }
 
   const best = picked.item;
   return {
@@ -1656,6 +1664,45 @@ function testSpotifySearch() {
     out.push("  " + q + " → " +
       (r ? (r.artist + " / " + r.name + "（一致度 " + r.score + "）" + (r.via ? " ※" + r.via : ""))
          : ("見つからず" + (err ? " エラー: " + err : ""))));
+  });
+  const msg = out.join("\n");
+  Logger.log(msg);
+  return msg;
+}
+
+// 検索APIの生の応答を確認する（認証は通るのに見つからないときの原因究明用）
+function testSpotifyRaw() {
+  const out = [];
+  let token = "";
+  try { token = spotifyToken(); } catch (e) { return "認証で失敗: " + e; }
+  out.push("トークン先頭: " + token.slice(0, 12) + "…（" + token.length + "文字）");
+  out.push("");
+
+  [["怪盗 back number", true], ["怪盗 back number", false], ["HANABI", false]].forEach(function (c) {
+    const url = "https://api.spotify.com/v1/search?type=track&limit=5" +
+      (c[1] ? "&market=JP" : "") + "&q=" + encodeURIComponent(c[0]);
+    out.push("--- q=" + c[0] + (c[1] ? " (market=JP)" : "") + " ---");
+    let res;
+    try {
+      res = UrlFetchApp.fetch(url, {
+        headers: { Authorization: "Bearer " + token }, muteHttpExceptions: true
+      });
+    } catch (e) { out.push("  通信で例外: " + e); return; }
+    const code = res.getResponseCode();
+    const body = res.getContentText() || "";
+    out.push("  HTTP " + code);
+    if (code !== 200) {
+      out.push("  応答: " + body.slice(0, 400));
+      return;
+    }
+    let j = {};
+    try { j = JSON.parse(body); } catch (e) { out.push("  JSON解析に失敗: " + body.slice(0, 200)); return; }
+    const items = (j.tracks && j.tracks.items) ? j.tracks.items : null;
+    if (!items) { out.push("  tracks.items がありません。応答: " + body.slice(0, 300)); return; }
+    out.push("  件数: " + items.length);
+    items.slice(0, 3).forEach(function (it) {
+      out.push("    " + (it.artists || []).map(function (a) { return a.name; }).join(", ") + " / " + it.name);
+    });
   });
   const msg = out.join("\n");
   Logger.log(msg);
