@@ -18,7 +18,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v52";
+const SITE_VER = "site v53";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -1256,31 +1256,28 @@ function similarity(a, b) {
   return denom ? (2 * hit) / denom : 0;
 }
 
-// カタカナ書きの洋楽（例: エド・シーラン / シェイプオブユー）を元の英語表記に直す。
-// Geminiに聞いて "アーティスト||曲名" の形で返してもらう。キー未設定なら何もしない。
-const KATAKANA_ONLY = /^[ァ-ヶー・･\s　]+$/;
-function guessEnglishTitle(artist, title) {
+// 曲が見つからなかったときに、Spotifyでの表記候補をGeminiに挙げてもらう。
+// 英語⇔カタカナのどちらの向きにも対応（フォームが英語でSpotifyがカタカナ、逆もあるため）。
+// 戻り値: [{artist, title}, ...] 最大3件 / 使えないときは []
+function guessSpotifyTitles(artist, title) {
   const key = geminiKey();
-  if (!key) return null;
-  // カタカナだけで書かれている部分が無ければ変換の必要なし（半角カナも全角に直して判定）
-  const aZ = hankakuKanaToZenkaku(artist), tZ = hankakuKanaToZenkaku(title);
-  const aKana = aZ && KATAKANA_ONLY.test(aZ);
-  const tKana = tZ && KATAKANA_ONLY.test(tZ);
-  if (!aKana && !tKana) return null;
+  if (!key) return [];
 
   const cache = CacheService.getScriptCache();
-  const ck = "en:" + Utilities.base64EncodeWebSafe(artist + "|" + title).slice(0, 200);
+  const ck = "sp2:" + Utilities.base64EncodeWebSafe(artist + "|" + title).slice(0, 180);
   const hit = cache.get(ck);
-  if (hit) {
-    try { const o = JSON.parse(hit); return o && o.title ? o : null; } catch (e) {}
-  }
+  if (hit) { try { return JSON.parse(hit) || []; } catch (e) {} }
 
   const prompt =
-    "次はカタカナで書かれた楽曲情報です。原題（英語などの元の表記）に直してください。\n" +
+    "Spotifyで曲を検索したいのですが、次の表記では見つかりませんでした。\n" +
     "アーティスト: " + (artist || "(不明)") + "\n" +
     "曲名: " + title + "\n\n" +
-    "回答は「アーティスト||曲名」の1行だけ。説明や記号は付けないでください。\n" +
-    "元から日本語の曲、または分からない場合は「不明」とだけ答えてください。";
+    "Spotifyに登録されていそうな表記の候補を、可能性の高い順に最大3つ挙げてください。\n" +
+    "・カタカナ表記なら英語などの原題も\n" +
+    "・英語表記ならカタカナ表記も\n" +
+    "・正式名称、副題つき、英題／邦題の違いなども考慮してください\n\n" +
+    "出力は1行に1候補、「アーティスト||曲名」の形式のみ。\n" +
+    "説明・番号・記号は一切付けないでください。分からなければ「不明」とだけ書いてください。";
   let res;
   try {
     res = UrlFetchApp.fetch(
@@ -1293,22 +1290,29 @@ function guessEnglishTitle(artist, title) {
         muteHttpExceptions: true
       }
     );
-  } catch (e) { return null; }
-  if (res.getResponseCode() !== 200) return null;
+  } catch (e) { return []; }
+  if (res.getResponseCode() !== 200) return [];
   let text = "";
   try {
     text = JSON.parse(res.getContentText()).candidates[0].content.parts[0].text.trim();
-  } catch (e) { return null; }
-  if (!text || text.indexOf("不明") >= 0) return null;
+  } catch (e) { return []; }
+  if (!text || text === "不明") return [];
 
-  const parts = text.split("||");
-  const out = {
-    artist: (parts.length > 1 ? parts[0] : "").trim(),
-    title: (parts.length > 1 ? parts[1] : parts[0]).trim()
-  };
-  if (!out.title) return null;
-  try { cache.put(ck, JSON.stringify(out), 21600); } catch (e) {}
-  return out;
+  const out = [];
+  text.split(/\r?\n/).forEach(function (line) {
+    const s = line.replace(/^[\s\-*・0-9.)）]+/, "").trim();
+    if (!s || s === "不明" || s.indexOf("||") < 0) return;
+    const p = s.split("||");
+    const cand = { artist: (p[0] || "").trim(), title: (p[1] || "").trim() };
+    if (!cand.title) return;
+    // 元と同じものは省く
+    if (normForMatch(cand.title) === normForMatch(title) &&
+        normForMatch(cand.artist) === normForMatch(artist)) return;
+    out.push(cand);
+  });
+  const trimmed = out.slice(0, 3);
+  try { cache.put(ck, JSON.stringify(trimmed), 21600); } catch (e) {}
+  return trimmed;
 }
 
 // 検索して最有力の1曲を返す { url, name, artist, score } / 見つからなければ null
@@ -1377,22 +1381,24 @@ function spotifySearchTrack(token, artist, title) {
 
   let picked = candidates.length ? pickBest(t, a) : { item: null, score: -1 };
 
-  // カタカナ書きの洋楽は、そのままだと候補が無い／似ていないことがある。
-  // Geminiで原題を推測して検索し直し、良くなればそちらを採用する。
+  // ここまでで見つからない／似ていない場合だけ、Geminiに別表記の候補を出してもらう。
+  // 英語→カタカナ、カタカナ→英語のどちらの向きにも対応する。
   if (picked.score < 0.6) {
-    const en = guessEnglishTitle(a, t);
-    if (en && (en.title !== t || en.artist !== a)) {
-      const enPlain = en.title.replace(/[（(\[【].*?[）)\]】]/g, " ").replace(/\s+/g, " ").trim();
-      [[en.artist ? (en.title + " " + en.artist) : en.title, false],
-       [en.artist ? 'track:"' + en.title + '" artist:"' + en.artist + '"' : "", false],
-       [enPlain !== en.title ? enPlain : "", false]
+    const alts = guessSpotifyTitles(a, t);
+    alts.forEach(function (alt) {
+      if (picked.score >= 0.85) return; // 十分良いものが見つかったら以降は試さない
+      const altPlain = alt.title.replace(/[（(\[【].*?[）)\]】]/g, " ").replace(/\s+/g, " ").trim();
+      [[alt.artist ? (alt.title + " " + alt.artist) : alt.title, false],
+       [alt.artist ? 'track:"' + alt.title + '" artist:"' + alt.artist + '"' : "", false],
+       [altPlain !== alt.title ? altPlain : "", false]
       ].forEach(function (q) { query(q[0], q[1]); });
-      const alt = pickBest(en.title, en.artist);
-      if (alt.item && alt.score > picked.score) {
-        picked = alt;
-        picked.via = "原題推定: " + (en.artist ? en.artist + " / " : "") + en.title;
+      // 元の表記との近さも見て、良くなった場合だけ採用する
+      const byAlt = pickBest(alt.title, alt.artist);
+      if (byAlt.item && byAlt.score > picked.score) {
+        picked = byAlt;
+        picked.via = "別表記で検索: " + (alt.artist ? alt.artist + " / " : "") + alt.title;
       }
-    }
+    });
   }
   if (!picked.item) return null;
 
