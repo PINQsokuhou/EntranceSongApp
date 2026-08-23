@@ -18,7 +18,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v48";
+const SITE_VER = "site v49";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -390,7 +390,7 @@ function setupAliasSheet() {
     ["上坂", "上坂 知弘", ""],
     ["上野", "上野 悠仁", "上野悠仁"],
     ["中根", "中根 拓海", ""],
-    ["中山", "中山 和輝", "", true],
+    ["中山", "中山 和輝", ""],
     ["仙田", "仙田 晴真", ""],
     ["俣野", "俣野 亜知", ""],
     ["冨髙", "冨髙 晃生", "冨高"],
@@ -1353,6 +1353,56 @@ function checkAccess() {
       (NOTIFY_EMAIL || me) + "）";
   });
   const msg = out.join("\n");
+  Logger.log(msg);
+  return msg;
+}
+
+// 新しいメンバーを名簿（楽曲登録シート）に追加する。
+// 1人につき2行（上段=曲名、下段=URL行）という構造を崩さずに末尾へ足す。
+// 下の NEW_MEMBERS を書き換えて実行する。[名前, フリガナ, 打, 投]
+function addRosterMembers() {
+  const NEW_MEMBERS = [
+    ["中山", "なかやま", "右", "右"]
+  ];
+
+  const sh = rosterBook().getSheetByName(ROSTER_SHEET);
+  if (!sh) return "「" + ROSTER_SHEET + "」シートが見つかりません";
+  const width = 17; // A〜Q（名前〜負け/引き分けチャンス曲）
+  const last = sh.getLastRow();
+  const existing = {};
+  if (last >= 2) {
+    sh.getRange(2, 1, last - 1, 1).getValues().forEach(function (r) {
+      const n = stripSpace(r[0]);
+      if (n && !/^https?:/i.test(n)) existing[n] = 1;
+    });
+  }
+
+  const rows = [];
+  const added = [], skipped = [];
+  NEW_MEMBERS.forEach(function (m) {
+    const name = stripSpace(m[0]);
+    if (!name) return;
+    if (existing[name]) { skipped.push(name); return; }
+    const titleRow = [name, stripSpace(m[1]), m[2] || "右", m[3] || "右"];
+    while (titleRow.length < width) titleRow.push("");
+    const urlRow = ["", "", "", "URL→"];
+    while (urlRow.length < width) urlRow.push("");
+    rows.push(titleRow, urlRow);
+    added.push(name);
+  });
+
+  if (rows.length) {
+    const start = sh.getLastRow() + 1;
+    sh.getRange(start, 1, rows.length, width).setValues(rows);
+    // URL行（下段）は薄い青で塗って見分けやすくする
+    for (let i = 0; i < rows.length / 2; i++) {
+      sh.getRange(start + 1 + i * 2, 4, 1, 14).setBackground("#e8f0fe");
+    }
+    try { CacheService.getScriptCache().removeAll(["knownNames", "music"]); } catch (e) {}
+  }
+  const msg = "追加: " + (added.join("、") || "なし") +
+    (skipped.length ? "\n既にいたのでスキップ: " + skipped.join("、") : "") +
+    "\n※ 曲名は空のままです。フォームからの登録か手入力で埋めてください。";
   Logger.log(msg);
   return msg;
 }
