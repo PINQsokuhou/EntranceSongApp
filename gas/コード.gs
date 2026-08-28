@@ -20,7 +20,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v60";
+const SITE_VER = "site v59";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -1467,82 +1467,6 @@ function guessSpotifyTitles(artist, title) {
   return trimmed;
 }
 
-// ---- GeminiでSpotifyのトラックURLを調べる（Spotify APIの代わり）----
-// SpotifyはAPI所有者にPremium契約を必須にしたため、無料アカウントでは検索APIが使えない。
-// そこでGeminiに曲を特定してもらい、トラックIDを直接答えさせる。
-// AIの推測なので、返ってきたIDが実在するかを埋め込みページで検証してから採用する。
-function geminiSpotifyTrack(artist, title) {
-  const key = geminiKey();
-  if (!key) throw new Error("GEMINI_API_KEY が未設定です");
-
-  const q = (artist ? artist + " / " : "") + title;
-  const cache = CacheService.getScriptCache();
-  const ck = "gsp:" + Utilities.base64EncodeWebSafe(q).slice(0, 180);
-  const hit = cache.get(ck);
-  if (hit) {
-    try { const o = JSON.parse(hit); return o && o.id ? o : null; } catch (e) {}
-  }
-
-  const prompt =
-    "次の楽曲のSpotifyトラックIDを答えてください。\n" +
-    "アーティスト: " + (artist || "(不明)") + "\n" +
-    "曲名: " + title + "\n\n" +
-    "SpotifyのトラックURLは https://open.spotify.com/track/XXXXXXXXXXXXXXXXXXXXXX の形で、" +
-    "XXXの部分が22文字の英数字のトラックIDです。\n" +
-    "出力は「トラックID||アーティスト名||曲名」の1行だけ。説明は不要です。\n" +
-    "確信が持てない場合や曲が特定できない場合は「不明」とだけ答えてください。" +
-    "推測でIDをでっち上げないでください。";
-
-  let res;
-  try {
-    res = UrlFetchApp.fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODEL +
-      ":generateContent?key=" + key,
-      {
-        method: "post", contentType: "application/json",
-        payload: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
-        muteHttpExceptions: true
-      });
-  } catch (e) { throw new Error("Gemini通信エラー: " + e); }
-  if (res.getResponseCode() !== 200) {
-    throw new Error("Gemini HTTP " + res.getResponseCode() + " " + (res.getContentText() || "").slice(0, 150));
-  }
-  let text = "";
-  try { text = JSON.parse(res.getContentText()).candidates[0].content.parts[0].text.trim(); }
-  catch (e) { return null; }
-  if (!text || text.indexOf("不明") >= 0) return null;
-
-  const line = text.split(/\r?\n/)[0].replace(/^[\s\-*・0-9.)）]+/, "").trim();
-  const p = line.split("||");
-  let id = (p[0] || "").trim();
-  const m = id.match(/track[\/:]([A-Za-z0-9]{22})/) || id.match(/^([A-Za-z0-9]{22})$/);
-  if (!m) return null;
-  id = m[1];
-
-  // 実在するIDか、埋め込みページが引けるかで確かめる（存在しないIDは弾く）
-  if (!spotifyTrackExists(id)) return null;
-
-  const out = {
-    id: id,
-    url: "https://open.spotify.com/track/" + id,
-    artist: (p[1] || artist || "").trim(),
-    name: (p[2] || title || "").trim()
-  };
-  try { cache.put(ck, JSON.stringify(out), 21600); } catch (e) {}
-  return out;
-}
-
-// トラックIDが実在するか、公開の埋め込みページで確認する（認証不要）
-function spotifyTrackExists(id) {
-  try {
-    const res = UrlFetchApp.fetch("https://open.spotify.com/oembed?url=" +
-      encodeURIComponent("https://open.spotify.com/track/" + id), { muteHttpExceptions: true });
-    if (res.getResponseCode() !== 200) return false;
-    const j = JSON.parse(res.getContentText() || "{}");
-    return !!(j && j.title);
-  } catch (e) { return false; }
-}
-
 // 検索して最有力の1曲を返す { url, name, artist, score } / 見つからなければ null
 // 完全一致でなくても拾えるよう、条件を変えて何通りか検索し、似ている度合いで選ぶ。
 function spotifySearchTrack(token, artist, title) {
@@ -1632,20 +1556,9 @@ function spotifySearchTrack(token, artist, title) {
       }
     });
   }
-  // Spotifyの検索APIが使えない場合（Premium必須の403など）はGeminiに調べてもらう
+  // APIがエラーを返していたなら「見つからない」ではなく障害として知らせる
   if (!picked.item) {
-    let g = null, gErr = "";
-    try { g = geminiSpotifyTrack(a, t); } catch (e) { gErr = String(e && e.message ? e.message : e); }
-    if (g) {
-      return {
-        url: g.url, name: g.name, artist: g.artist,
-        score: 1, via: "Geminiが特定（実在を確認済み）"
-      };
-    }
-    if (lastErr) {
-      throw new Error("Spotify検索エラー: " + lastErr +
-        (gErr ? " / Geminiでも取得できず: " + gErr : " / Geminiでも特定できませんでした"));
-    }
+    if (lastErr) throw new Error("Spotify検索エラー: " + lastErr);
     return null;
   }
 
@@ -1742,15 +1655,14 @@ function testSpotifySearch() {
     out.push("認証: ★失敗★ " + String(e).slice(0, 200));
     const m1 = out.join("\n"); Logger.log(m1); return m1;
   }
-  out.push("GEMINI_API_KEY: " + (geminiKey() ? "設定あり（Spotifyが使えない時の代替に使用）" : "★未設定★"));
   out.push("");
   out.push("--- 検索テスト ---");
   [["back number", "怪盗"], ["Mr.Children", "HANABI"], ["", "暴れん坊将軍メインテーマ"]].forEach(function (c) {
     let r = null, err = "";
-    try { r = spotifySearchTrack(token, c[0], c[1]); } catch (e) { err = String(e && e.message ? e.message : e).slice(0, 200); }
+    try { r = spotifySearchTrack(token, c[0], c[1]); } catch (e) { err = String(e).slice(0, 120); }
     const q = (c[0] ? c[0] + "/" : "") + c[1];
     out.push("  " + q + " → " +
-      (r ? (r.artist + " / " + r.name + "  " + r.url + (r.via ? "  ※" + r.via : ""))
+      (r ? (r.artist + " / " + r.name + "（一致度 " + r.score + "）" + (r.via ? " ※" + r.via : ""))
          : ("見つからず" + (err ? " エラー: " + err : ""))));
   });
   const msg = out.join("\n");
