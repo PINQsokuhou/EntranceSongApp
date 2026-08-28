@@ -11,7 +11,9 @@ const ALL_GAMES = "全試合経過";   // 全試合を積み上げるシート�
 const ROSTER_SHEET = "楽曲登録";  // メンバー・楽曲の一元管理シート（タブ名）
 // 楽曲登録を別ファイルに置く場合、そのスプレッドシートIDを入れる（"" なら同じファイル内）
 const ROSTER_SS_ID = "1_7pMPpgLpNvroqfYcMRODo3t8S_OHVzP69nqMAzLbig";
-const LIVE_SHEET = "LIVE";        // 試合中のリアルタイム記録
+const LIVE_SHEET = "LIVE";        // 試合中のリアルタイム記録（速報枠1のシート名）
+// 同時に速報を出せる試合数。枠1は "LIVE"、枠2以降は "LIVE2" "LIVE3" … のシートを使う
+const LIVE_SLOTS = 3;
 // ページのキャッシュ保持時間（秒）。試合を保存すると関係するキャッシュは消えるので長めでよい
 const CACHE_TTL = 21600; // 6時間（CacheService の上限）
 const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの本文を試合ごとに保存（複数端末で閲覧用）
@@ -20,7 +22,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v59";
+const SITE_VER = "site v60";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -76,7 +78,7 @@ function doGet(e) {
   // 試合ページ（ライブは毎回最新、終了試合はキャッシュ）
   if (p.view === "game") {
     // 終了した試合の内容はもう変わらないので長めにキャッシュする（ライブは毎回最新）
-    h = (p.sheet === LIVE_SHEET) ? renderGame(p.sheet)
+    h = isLiveSheet(p.sheet) ? renderGame(p.sheet)
       : cached(cache, sk + "g:" + p.sheet, 1800, function () { return renderGame(p.sheet); });
   } else if (p.view === "stats") {
     // 個人成績（種目・期間ごとにキャッシュ）。試合を保存したときに消えるので長めで良い
@@ -102,7 +104,7 @@ function doGet(e) {
   } else {
     // 試合一覧（全シートを読むので特にキャッシュが効く）
     // ライブ中は速報を止めないよう短く、それ以外は長く持たせる
-    const idxTtl = liveMeta() ? 30 : CACHE_TTL;
+    const idxTtl = anyLive() ? 30 : CACHE_TTL;
     h = cached(cache, sk + "index", idxTtl, function () { return renderIndex(); });
   }
 
@@ -184,8 +186,8 @@ function doPost(e) {
     const d = JSON.parse(e.postData.contents);
     if (d.action === "liveStart") return json(liveStart(d));
     if (d.action === "livePA") return json(livePA(d));
-    if (d.action === "liveUndo") return json(liveUndo());
-    if (d.action === "liveEnd") return json(liveEnd());
+    if (d.action === "liveUndo") return json(liveUndo(d));
+    if (d.action === "liveEnd") return json(liveEnd(d));
     if (d.action === "liveState") return json(liveSetState(d));
     if (d.action === "saveTs") return json(saveTsText(d.sheet, d.text));
     return json(saveGame(d)); // 試合終了時の本保存
@@ -198,8 +200,8 @@ function doPost(e) {
 function recordAction(d) {
   if (d.action === "liveStart") return liveStart(d);
   if (d.action === "livePA") return livePA(d);
-  if (d.action === "liveUndo") return liveUndo();
-  if (d.action === "liveEnd") return liveEnd();
+  if (d.action === "liveUndo") return liveUndo(d);
+  if (d.action === "liveEnd") return liveEnd(d);
   if (d.action === "liveState") return liveSetState(d);
   if (d.action === "saveTs") return saveTsText(d.sheet, d.text);
   return saveGame(d);
@@ -549,6 +551,20 @@ function setupSeasonSheet() {
 // ---------------- 1) 試合終了時の本保存 ----------------
 
 function saveGame(d) {
+  // 複数の端末が同時刻に試合終了を送ってくることがある。
+  // シート名の採番と「全試合経過」への追記が同時に走ると上書き・重複が起きるため直列化する。
+  const lock = LockService.getScriptLock();
+  try { lock.waitLock(120000); } catch (e) {
+    return { ok: false, error: "他の端末が保存中です。少し待ってからもう一度お試しください。" };
+  }
+  try {
+    return saveGameLocked(d);
+  } finally {
+    try { lock.releaseLock(); } catch (e) {}
+  }
+}
+
+function saveGameLocked(d) {
   const book = ss();
   // 試合日ごとの新シート（重複したら -2, -3 …）
   let name = d.date, i = 2;
@@ -818,58 +834,125 @@ function fileId(v) {
 
 // ---------------- 4) リアルタイム速報の受信 ----------------
 
-function liveSheet() {
+// 速報は「枠」を最大 LIVE_SLOTS 個持ち、別々の試合を同時に中継できる。
+// 枠1だけは従来と同じ名前（シート LIVE / プロパティ liveMeta・liveState）にしてあるので、
+// 枠を送ってこない旧クライアント（Androidアプリ）はそのまま枠1で動く。
+function liveSheetName(slot) { return slot >= 2 ? LIVE_SHEET + slot : LIVE_SHEET; }
+function liveMetaKey(slot) { return slot >= 2 ? "liveMeta" + slot : "liveMeta"; }
+function liveStateKey(slot) { return slot >= 2 ? "liveState" + slot : "liveState"; }
+
+// シート名 → 枠番号（速報シートでなければ 0）
+function liveSlotOfSheet(name) {
+  const s = String(name || "");
+  if (s === LIVE_SHEET) return 1;
+  const m = s.match(/^LIVE(\d+)$/);
+  const n = m ? parseInt(m[1], 10) : 0;
+  return (n >= 2 && n <= LIVE_SLOTS) ? n : 0;
+}
+function isLiveSheet(name) { return liveSlotOfSheet(name) > 0; }
+
+// リクエストの枠番号。指定が無い旧クライアントは枠1として扱う
+function slotOf(d) {
+  const n = parseInt((d && d.slot) || 0, 10);
+  return (n >= 1 && n <= LIVE_SLOTS) ? n : 1;
+}
+
+function liveSheet(slot) {
   const book = ss();
-  return book.getSheetByName(LIVE_SHEET) || book.insertSheet(LIVE_SHEET);
+  const name = liveSheetName(slot || 1);
+  return book.getSheetByName(name) || book.insertSheet(name);
+}
+
+// 試合開始時の枠の割り当て。
+//   数字（1〜LIVE_SLOTS） … その枠を使う（再読込後に同じ試合を続ける場合）
+//   "auto"               … 空いている一番小さい枠を渡す
+//   指定なし              … 従来通り枠1
+// 同時に2台が開始したとき同じ枠を配ってしまわないよう LockService で直列化する。
+function assignLiveSlot(d) {
+  const want = d ? d.slot : null;
+  const n = parseInt(want, 10);
+  if (n >= 1 && n <= LIVE_SLOTS) return n;
+  if (String(want) !== "auto") return 1;
+  const lock = LockService.getScriptLock();
+  try { lock.waitLock(15000); } catch (e) {}
+  try {
+    const props = PropertiesService.getScriptProperties();
+    for (let i = 1; i <= LIVE_SLOTS; i++) {
+      if (props.getProperty(liveMetaKey(i))) continue;
+      // 先に印を付けて他の端末に同じ枠を渡さないようにする（中身は liveStart が上書きする）
+      props.setProperty(liveMetaKey(i), JSON.stringify({ date: "", stadium: "", slot: i }));
+      return i;
+    }
+    return LIVE_SLOTS; // 全部埋まっていたら最後の枠を使い回す
+  } finally {
+    try { lock.releaseLock(); } catch (e) {}
+  }
 }
 
 function liveStart(d) {
-  const sh = liveSheet();
+  const slot = assignLiveSlot(d);
+  const sh = liveSheet(slot);
   sh.clear();
   sh.getRange(1, 1, 1, HEADER.length).setValues([HEADER]);
   PropertiesService.getScriptProperties().setProperty(
-    "liveMeta", JSON.stringify({ date: d.date || "", stadium: d.stadium || "" })
+    liveMetaKey(slot), JSON.stringify({ date: d.date || "", stadium: d.stadium || "", slot: slot })
   );
   try { CacheService.getScriptCache().remove("index"); } catch (e) {}
-  return { ok: true };
+  return { ok: true, slot: slot, sheet: liveSheetName(slot) };
 }
 
 function livePA(d) {
-  const sh = liveSheet();
+  const sh = liveSheet(slotOf(d));
   sh.getRange(sh.getLastRow() + 1, 1, 1, HEADER.length).setValues([d.row.map(num)]);
   return { ok: true };
 }
 
-function liveUndo() {
-  const sh = liveSheet();
+function liveUndo(d) {
+  const sh = liveSheet(slotOf(d));
   if (sh.getLastRow() >= 2) sh.deleteRow(sh.getLastRow());
   return { ok: true };
 }
 
-function liveEnd() {
-  const sh = liveSheet();
-  sh.clear();
+function liveEnd(d) {
+  const slot = slotOf(d);
+  // 未使用の枠を掃除するときにシートを作ってしまわないよう、あるときだけ消す
+  const sh = ss().getSheetByName(liveSheetName(slot));
+  if (sh) sh.clear();
   const props = PropertiesService.getScriptProperties();
-  props.deleteProperty("liveMeta");
-  props.deleteProperty("liveState");
+  props.deleteProperty(liveMetaKey(slot));
+  props.deleteProperty(liveStateKey(slot));
   try { CacheService.getScriptCache().remove("index"); } catch (e) {}
   return { ok: true };
 }
 
-function liveMeta() {
-  const s = PropertiesService.getScriptProperties().getProperty("liveMeta");
+function liveMeta(slot) {
+  const s = PropertiesService.getScriptProperties().getProperty(liveMetaKey(slot || 1));
   return s ? JSON.parse(s) : null;
+}
+
+// どこか1枠でも試合中かどうか（試合一覧のキャッシュ時間の判定に使う）
+function anyLive() {
+  const props = PropertiesService.getScriptProperties();
+  for (let i = 1; i <= LIVE_SLOTS; i++) if (props.getProperty(liveMetaKey(i))) return true;
+  return false;
 }
 
 // 1球速報: 現在状況（現打者・カウント・投球経過）を保存
 function liveSetState(d) {
-  PropertiesService.getScriptProperties().setProperty("liveState", JSON.stringify(d));
+  PropertiesService.getScriptProperties().setProperty(liveStateKey(slotOf(d)), JSON.stringify(d));
   return { ok: true };
 }
 
-function liveState() {
-  const s = PropertiesService.getScriptProperties().getProperty("liveState");
+function liveState(slot) {
+  const s = PropertiesService.getScriptProperties().getProperty(liveStateKey(slot || 1));
   return s ? JSON.parse(s) : null;
+}
+
+// 速報枠を全部空にする（記録側の終了送信が届かず「試合中」が残ってしまったとき用）
+function clearAllLive() {
+  for (let i = 1; i <= LIVE_SLOTS; i++) liveEnd({ slot: i });
+  invalidatePageCaches();
+  return "速報枠を全部クリアしました";
 }
 
 // ---------------- 3) 速報サイト ----------------
@@ -3475,20 +3558,30 @@ function renderIndex() {
       '<div style="font-size:.85em;color:#9fa3ad;margin-top:2px">開いた画面の⬇ダウンロードでAPKを保存 → インストール</div></a>';
   }
 
-  // 試合中（LIVE）。アーカイブ（過去シーズン）表示中は出さない
-  const liveRows = _seasonId ? [] : rowsOf(LIVE_SHEET);
-  const meta = _seasonId ? null : liveMeta();
-  if (meta || liveRows.length > 0) {
+  // 試合中（速報枠1〜LIVE_SLOTS を全部並べる）。アーカイブ（過去シーズン）表示中は出さない
+  let liveCount = 0;
+  for (let slot = 1; !_seasonId && slot <= LIVE_SLOTS; slot++) {
+    const meta = liveMeta(slot);
+    const shName = liveSheetName(slot);
+    // 一度も使っていない枠のシートは存在しないので、無駄な問い合わせを省く
+    if (!meta && sheetNamesOf().indexOf(shName) < 0) continue;
+    const liveRows = rowsOf(shName);
+    if (!meta && liveRows.length === 0) continue;
+    liveCount++;
     const l = lineScore(liveRows);
     const d = liveRows[0] ? liveRows[0].date : (meta ? meta.date : "");
     const st = liveRows[0] ? liveRows[0].stadium : (meta ? meta.stadium : "");
-    body += '<a class="card live" target="_top" href="' + url + '?view=game&sheet=' + LIVE_SHEET + '">' +
+    // 同じ日・同じ球場で複数試合が並ぶので、打者が出てきたらチーム名で見分けられるようにする
+    const tn = liveRows.length ? teamNames(liveRows) : null;
+    const score = tn ? (esc(tn.f) + ' ' + l.scoreF + ' - ' + l.scoreS + ' ' + esc(tn.s))
+      : ('先攻 ' + l.scoreF + ' - ' + l.scoreS + ' 後攻');
+    body += '<a class="card live" target="_top" href="' + url + '?view=game&sheet=' + liveSheetName(slot) + '">' +
       '<div class="d"><span class="dot"></span>試合中　' + esc(d) + '　' + esc(st) + '</div>' +
-      '<div class="s">先攻 ' + l.scoreF + ' - ' + l.scoreS + ' 後攻</div></a>';
+      '<div class="s">' + score + '</div></a>';
   }
 
   const names = gameSheetNames().reverse();
-  if (names.length === 0 && !meta) body += '<p class="sub">まだ試合がありません。</p>';
+  if (names.length === 0 && !liveCount) body += '<p class="sub">まだ試合がありません。</p>';
   const sums = gameSummaries(names); // 要約は永続キャッシュ済み（初回だけ各シートを読む）
   names.forEach(n => {
     const g = sums[n];
@@ -3501,9 +3594,10 @@ function renderIndex() {
 }
 
 function renderGame(name) {
-  const isLive = name === LIVE_SHEET;
+  const liveSlot = liveSlotOfSheet(name);
+  const isLive = liveSlot > 0;
   const rows = rowsOf(name);
-  const meta = isLive ? liveMeta() : null;
+  const meta = isLive ? liveMeta(liveSlot) : null;
   const url = siteUrl();
   if (rows.length === 0 && !meta) {
     return page("試合", '<p>データがありません。</p><a class="card" target="_top" href="' + url + '?' + seasonParam() + '">← 一覧へ</a>', isLive);
@@ -3568,7 +3662,7 @@ function renderGame(name) {
   body += sb;
 
   // 1球速報（試合中のみ。現在の打者・カウント・投球経過）
-  if (isLive) body += live1HTML(liveState());
+  if (isLive) body += live1HTML(liveState(liveSlot));
 
   // #6 打順（スコアボードの下に両チームを2列で表示）
   const ordF = battingOrder(rows, true), ordS = battingOrder(rows, false);

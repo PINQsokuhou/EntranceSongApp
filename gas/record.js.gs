@@ -153,7 +153,7 @@ padding:9px 16px;border-radius:20px;font-size:.85em;z-index:80;box-shadow:0 4px 
 font-size:.68em;margin-left:8px;vertical-align:2px}
 </style></head><body>
 <div class="wrap">
-  <div class="top toplinks"><a href="${url}">← 一覧へ</a><a href="${url}?view=game&sheet=LIVE">速報を見る</a></div>
+  <div class="top toplinks"><a href="${url}">← 一覧へ</a><a id="livelink" href="${url}?view=game&sheet=LIVE">速報を見る</a></div>
   <h1>⚾ スコアブック記録</h1>
   <div id="app"><div class="loading">読み込み中…</div></div>
 </div>
@@ -524,6 +524,7 @@ function rosterByName(name){
 function defaultState(){
   return {
     started: false, ended: false,
+    liveSlot: 0, // 速報枠（0=未割り当て。試合開始時にサーバーが1〜3のどれかを返す）
     startedAt: null, durationMs: 0, paStartMs: null,
     dateLabel: '', stadium: '', stadiumConfirmed: false,
     inning: 1, attacking: 'first',
@@ -722,16 +723,18 @@ function fetchPost(obj){
     try { return JSON.parse(text); } catch (e) { return null; }
   });
 }
-function postJson(url, obj){
+function postJson(url, obj, timeoutMs){
+  // 試合終了の保存は、他の端末の保存待ち（サーバー側で直列化）で長引くことがあるので余裕を持たせる
+  var ms = timeoutMs || 30000;
   var p;
   if (hasGSR() && !gsrBroken) {
-    p = withTimeout(gsrCall('recordAction', obj), 30000, '保存通信(script.run)')
+    p = withTimeout(gsrCall('recordAction', obj), ms, '保存通信(script.run)')
       .catch(function(err){
         gsrBroken = true;
-        return withTimeout(fetchPost(obj), 30000, '保存通信(fetch)');
+        return withTimeout(fetchPost(obj), ms, '保存通信(fetch)');
       });
   } else {
-    p = withTimeout(fetchPost(obj), 30000, '保存通信(fetch)');
+    p = withTimeout(fetchPost(obj), ms, '保存通信(fetch)');
   }
   return p.then(function(result){
     if (result && result.ok === false) throw new Error(result.error || 'GAS error');
@@ -753,26 +756,60 @@ function fetchRoster(){
   }
   return withTimeout(fetchGetRoster(), 15000, '名簿取得(fetch)');
 }
+// ===== 速報枠 =====
+// 複数の端末が同時に速報を出せるよう、サーバーが「枠」（1〜3）を1台につき1つ配る。
+// 試合開始の応答で枠番号が決まるので、それが返るまで他の速報送信は liveReady で待たせる。
+var liveReady = Promise.resolve();
+function liveSlot(){ return (state && state.liveSlot) ? state.liveSlot : 1; }
+function liveSheetName(){ return 'LIVE' + (liveSlot() >= 2 ? liveSlot() : ''); }
+function updateLiveLink(){
+  var a = byId('livelink');
+  if (!a) return;
+  a.href = GAS_URL + '?view=game&sheet=' + liveSheetName();
+  a.textContent = (state && state.liveSlot >= 2) ? ('速報を見る（枠' + state.liveSlot + '）') : '速報を見る';
+}
 function postLiveStart(){
-  postJson(GAS_URL, { action: 'liveStart', date: state.dateLabel, stadium: state.stadium }).catch(function(){});
+  liveReady = postJson(GAS_URL, {
+    action: 'liveStart',
+    slot: state.liveSlot || 'auto', // 再開時は同じ枠、初回は空き枠を割り当ててもらう
+    date: state.dateLabel, stadium: state.stadium
+  }).then(function(res){
+    if (res && res.slot) { state.liveSlot = res.slot; saveState(); updateLiveLink(); }
+  }).catch(function(){});
+  return liveReady;
 }
 function postLivePA(entry){
-  postJson(GAS_URL, { action: 'livePA', row: playRow(entry) }).catch(function(){});
+  var row = playRow(entry); // 枠確定待ちの間に状態が動いても良いよう、行はこの場で作っておく
+  liveReady.then(function(){
+    postJson(GAS_URL, { action: 'livePA', slot: liveSlot(), row: row }).catch(function(){});
+  });
 }
-function postLiveUndo(){ postJson(GAS_URL, { action: 'liveUndo' }).catch(function(){}); }
-function postLiveEnd(){ postJson(GAS_URL, { action: 'liveEnd' }).catch(function(){}); }
+function postLiveUndo(){
+  liveReady.then(function(){
+    postJson(GAS_URL, { action: 'liveUndo', slot: liveSlot() }).catch(function(){});
+  });
+}
+function postLiveEnd(){
+  liveReady.then(function(){
+    postJson(GAS_URL, { action: 'liveEnd', slot: liveSlot() }).catch(function(){});
+  });
+}
 function postLiveState(){
   var b = currentBatter(), p = currentPitcherName();
   var bm = b ? rosterByName(b) : null, pm = p ? rosterByName(p) : null;
-  postJson(GAS_URL, {
-    action: 'liveState',
+  var payload = {
+    action: 'liveState', slot: 0, // slot は送信直前に確定した枠を入れる
     inning: state.inning, tb: topBottomLabel(), outs: state.outs,
     balls: state.balls, strikes: state.strikes, bases: basesStrOf(state.bases),
     scoreF: state.scoreFirst, scoreS: state.scoreSecond,
     batter: b || '', batSide: bm ? bm.bat : '', batNum: b ? (state.atBatCounts[b] || 0) : 0,
     pitcher: p || '', pitchSide: pm ? pm.throw : '',
     pitches: state.curPitches, pending: !!state.pending
-  }).catch(function(){});
+  };
+  liveReady.then(function(){
+    payload.slot = liveSlot();
+    postJson(GAS_URL, payload).catch(function(){});
+  });
 }
 
 function showToast(msg){
@@ -845,6 +882,7 @@ function startGame(){
   if (!state.pitcherOfSecond) { showToast('後攻チームの先発投手を設定してください'); return; }
   if (!state.stadium.trim()) { showToast('球場を設定してください'); return; }
   state.started = true;
+  state.liveSlot = 0; // 新しい試合なので速報枠は割り当て直す（前回の枠を他の端末が使っている場合がある）
   state.startedAt = Date.now(); // 試合時間タイマー開始
   state.paStartMs = state.startedAt; // 1人目の打席開始 = 試合開始
   undoStack = [];
@@ -1068,7 +1106,7 @@ function endGame(){
   // サーバー（サイト）にもタイムスタンプ本文を保存 → 複数端末で閲覧できる
   payload.ytText = ytBuild(ytGame);
   showToast('保存中…');
-  postJson(GAS_URL, payload).then(function(res){
+  postJson(GAS_URL, payload, 180000).then(function(res){
     postLiveEnd();
     state.ended = true;
     state.finalStats = stats;
@@ -1759,6 +1797,7 @@ function boot(){
     state = saved || defaultState();
     if (!state.dateLabel) state.dateLabel = todayStr();
     if (state.started && !state.ended) maybePromptPitcher();
+    updateLiveLink(); // 再読込しても、この端末が使っている速報枠へリンクする
     render();
   }).catch(function(err){
     state = defaultState();
@@ -1774,6 +1813,7 @@ RB.bootNoRoster = function(){
   var saved = loadState();
   state = saved || defaultState();
   if (!state.dateLabel) state.dateLabel = todayStr();
+  updateLiveLink();
   render();
 };
 boot();
