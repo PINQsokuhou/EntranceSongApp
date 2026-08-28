@@ -59,6 +59,13 @@ function writeCache(search, html) {
 }
 
 function show(html) {
+  // document.open() は「解析中のインラインスクリプトから呼ばれたら何もしない」仕様。
+  // そのまま document.write すると元のbody（「読み込み中…」とflexのCSS）が残り、
+  // 中身が横に並んでしまうので、解析が終わってから差し替える。
+  if (document.readyState === "loading") {
+    setTimeout(function () { show(html); }, 0);
+    return;
+  }
   document.open();
   document.write(html);
   document.close();
