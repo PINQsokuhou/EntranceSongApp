@@ -22,7 +22,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v60";
+const SITE_VER = "site v61";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -2823,6 +2823,121 @@ const PIT_RANK = [
   { id: "er", label: "自責点", rate: true, asc: true, val: p => p.er }
 ];
 
+// ---- 成績シートの見出しをそのままランキング種目にする ----
+// 成績シートには打撃50数項目・投手60数項目が横に並んでいる。ランキングの選択肢を
+// この見出しから作れば、スプシに指標を足したときサイト側の修正なしで選べるようになる。
+
+// 小さいほど上位の指標（成績シートの見出し名で判定）
+const STAT_ASC = {
+  "防御率": 1, "失点率": 1, "FIP": 1, "tRA": 1, "WHIP": 1, "BB/9": 1, "HR/9": 1,
+  "被打率": 1, "被出塁率": 1, "被長打率": 1, "被OPS": 1, "得点圏被打率": 1,
+  "三振率": 1, "併殺": 1, "3バント失敗": 1, "スクイズ失敗": 1
+};
+// 見出しに「率」や「/」が無いが、比較には規定打席・規定投球回を設けたい指標。
+// wRAA・wRC・RSAA・PR は累積値（打席が多いほど増える）なので規定は設けない。
+const STAT_RATE_EXTRA = {
+  "OPS": 1, "被OPS": 1, "BABIP": 1, "wOBA": 1, "wRC+": 1,
+  "FIP": 1, "tRA": 1, "WHIP": 1, "LOB%": 1
+};
+function isRateLabel(label) {
+  return /[率%％]/.test(label) || label.indexOf("/") >= 0 || !!STAT_RATE_EXTRA[label];
+}
+
+// 成績シートのセルを数値にする（"#DIV/0!" などのエラー値や空欄は null）
+function statNum(v) {
+  if (typeof v === "number") return isFinite(v) ? v : null;
+  const s = String(v == null ? "" : v).trim();
+  if (!s || s.charAt(0) === "#") return null;
+  const n = parseFloat(s.replace(/[,%％]/g, ""));
+  return isNaN(n) ? null : n;
+}
+
+// ランキングの表示。スプシの表示書式をそのまま使い、取れないときだけ自前で整形する
+function sheetDisp(src, r, c, label) {
+  const d = src.display && src.display[r] ? String(src.display[r][c] || "").trim() : "";
+  if (d) return d;
+  const v = src.values[r][c];
+  if (typeof v !== "number" || !isFinite(v)) return fmtStat(v);
+  if (Math.round(v) === v) return String(v);
+  if (/率$/.test(label) && v > -1 && v < 1) return f3(v);
+  return f2(v);
+}
+
+// 成績シートは「打撃ブロック」と「投手ブロック」が横に並ぶ。
+// 投手ブロックの先頭は投手名の列なので、A列に出てくる名前が並ぶ列を境界とする。
+function seisekiSplitCol(values) {
+  const names = Object.create(null);
+  for (let r = 1; r < values.length; r++) {
+    const n = normName(values[r][0]);
+    if (n) names[n] = 1;
+  }
+  const width = values[0].length;
+  for (let c = 1; c < width; c++) {
+    let hit = 0, nonEmpty = 0;
+    for (let r = 1; r < values.length; r++) {
+      const v = values[r][c];
+      if (v === "" || v === null || v === undefined) continue;
+      nonEmpty++;
+      if (typeof v === "number") continue; // 数値の列は名前ではないので照合しない
+      if (names[normName(v)]) hit++;
+    }
+    if (nonEmpty >= 3 && hit >= nonEmpty * 0.8) return c;
+  }
+  return -1;
+}
+
+// 成績シートを1回だけ読んで、見出し・値・打撃/投手の境界を覚えておく
+var _seisekiRankCache = {};
+function seisekiRankSource(sheet) {
+  if (!sheet) return null;
+  const key = sheet.getParent().getId() + "/" + sheet.getName();
+  if (_seisekiRankCache[key]) return _seisekiRankCache[key];
+  const range = sheet.getDataRange();
+  const values = range.getValues();
+  if (!values.length) return null;
+  const split = seisekiSplitCol(values);
+  _seisekiRankCache[key] = {
+    values: values,                      // 並べ替え用の生の数値
+    display: range.getDisplayValues(),   // 表示はスプシの書式をそのまま使う
+    headers: values[0],
+    split: split,
+    batTo: (split > 1) ? split - 1 : values[0].length - 1
+  };
+  return _seisekiRankCache[key];
+}
+
+// 見出しからランキング種目を作る（打撃= 1〜batTo列、投手= split+1〜末尾）
+function sheetRankDefs(src, isBat) {
+  if (!src) return [];
+  if (!isBat && src.split < 1) return [];
+  const from = isBat ? 1 : src.split + 1;
+  const to = isBat ? src.batTo : src.headers.length - 1;
+  const defs = [], seen = {};
+  for (let c = from; c <= to; c++) {
+    const label = String(src.headers[c] || "").trim();
+    if (!label) continue;
+    // 同じ見出しが2つある場合に区別できるよう、2つ目以降は列番号を付ける
+    const id = seen[label] ? (label + "#" + c) : label;
+    seen[label] = 1;
+    defs.push({
+      id: "c:" + id, col: c, label: label, sheetCol: true,
+      rate: isRateLabel(label), asc: !!STAT_ASC[label]
+    });
+  }
+  return defs;
+}
+
+// 規定打席／規定投球回の判定に使う列
+function qualColOf(src, isBat) {
+  const from = isBat ? 1 : src.split + 1;
+  const to = isBat ? src.batTo : src.headers.length - 1;
+  const want = isBat ? "打席" : "投球回";
+  for (let c = from; c <= to; c++) {
+    if (String(src.headers[c] || "").trim() === want) return c;
+  }
+  return -1;
+}
+
 // 期間タブ用: 存在する月間経過シートを列挙（[{sheet, label}]。先頭は全期間）
 const CAREER_PERIOD = "__career__";     // 全シーズン合算（成績ページの期間セレクタ用）
 const STATSONLY_PERIOD = "__statsonly__"; // 成績のみの年度（試合データ無し）
@@ -3351,44 +3466,77 @@ function renderPlayer(nameRaw, period) {
 function renderStats(type, statId, period) {
   const url = siteUrl();
   const isBat = type !== "pit";
-  const defs = isBat ? BAT_RANK : PIT_RANK;
-  const def = defs.filter(d => d.id === statId)[0] || defs[0];
 
   // 期間（統一セレクタ: 今シーズン通算/今シーズンn月/全シーズン通算/過去シーズン）
   const rp = resolvePeriodValue(period);
-  // 通算＝全シーズン合算、成績のみの年度＝成績表から、それ以外＝そのシーズンの経過シートから
   const isCareer = rp.sheet === CAREER_PERIOD;
-  let data;
-  if (isCareer) {
-    data = isBat ? careerBatData() : careerPitData();
-  } else if (rp.statsOnly) {
-    const d = statsOnlyDataOf(rp.seasonId);
-    data = isBat ? d.bat : d.pit;
-  } else {
-    data = isBat ? batAllFrom(rowsOf(rp.sheet)) : pitAllFrom(rowsOf(rp.sheet), rp.sheet);
-  }
-  if (isBat) attachWrcPlus(data); // WRC+ はリーグ全体から算出するため事前に付与
+
+  // 成績シートがある期間は、その見出しをそのままランキング種目にする（スプシの全項目）。
+  // 全シーズン通算だけは対応する成績シートが無いので、従来どおり試合記録から集計する。
+  const seiseki = isCareer ? null
+    : (rp.statsOnly ? statsOnlySheetOf(rp.seasonId) : seisekiSheetFor(rp.sheet));
+  const src = seisekiRankSource(seiseki);
+  const sheetDefs = sheetRankDefs(src, isBat);
+  const useSheet = sheetDefs.length > 0;
+
+  const defs = useSheet ? sheetDefs : (isBat ? BAT_RANK : PIT_RANK);
+  // 指定が無い（または期間を変えて種目が入れ替わった）ときの既定は打率／防御率。
+  // 成績シートの並び順そのままだと先頭が「出場」「登坂」になってしまうため。
+  const fallback = isBat ? "打率" : "防御率";
+  const def = defs.filter(d => d.id === statId)[0] ||
+    defs.filter(d => d.label === fallback)[0] || defs[0];
+  const subLabel = isBat ? "打席" : "投球回";
 
   // 対象者の抽出（率系は規定ライン以上のみ）
   const list = [];
-  Object.keys(data).forEach(nm => {
-    const d = data[nm];
-    if (def.rate) {
-      if (isBat && d.pa < BAT_MIN_PA) return;
-      if (!isBat && d.outs < PIT_MIN_OUTS) return;
+  if (useSheet) {
+    const nameCol = isBat ? 0 : src.split;
+    const qc = qualColOf(src, isBat);
+    const minQ = isBat ? BAT_MIN_PA : PIT_MIN_OUTS / 3;
+    for (let r = 1; r < src.values.length; r++) {
+      const nm = normName(src.values[r][nameCol]);
+      if (!nm) continue;
+      const q = qc >= 0 ? statNum(src.values[r][qc]) : null;
+      if (def.rate && qc >= 0 && (q === null || q < minQ)) continue;
+      const v = statNum(src.values[r][def.col]);
+      if (v === null) continue;
+      list.push({ name: nm, v: v,
+        disp: sheetDisp(src, r, def.col, def.label),
+        sub: q === null ? "-" : sheetDisp(src, r, qc, subLabel) });
     }
-    const v = def.val(d);
-    if (v === null || v === undefined || isNaN(v) && v !== Infinity) return;
-    list.push({ name: nm, v: v, d: d });
-  });
+  } else {
+    // 通算: 試合記録から集計する（種目は従来の基本指標のみ）
+    let data;
+    if (isCareer) {
+      data = isBat ? careerBatData() : careerPitData();
+    } else if (rp.statsOnly) {
+      const d = statsOnlyDataOf(rp.seasonId);
+      data = isBat ? d.bat : d.pit;
+    } else {
+      data = isBat ? batAllFrom(rowsOf(rp.sheet)) : pitAllFrom(rowsOf(rp.sheet), rp.sheet);
+    }
+    if (isBat) attachWrcPlus(data); // WRC+ はリーグ全体から算出するため事前に付与
+    Object.keys(data).forEach(nm => {
+      const d = data[nm];
+      if (def.rate) {
+        if (isBat && d.pa < BAT_MIN_PA) return;
+        if (!isBat && d.outs < PIT_MIN_OUTS) return;
+      }
+      const v = def.val(d);
+      if (v === null || v === undefined || isNaN(v) && v !== Infinity) return;
+      list.push({ name: nm, v: v, disp: def.fmt ? def.fmt(v) : String(v),
+        sub: isBat ? String(d.pa) : ipStr(d.outs) });
+    });
+  }
   list.sort((a, b) => def.asc ? a.v - b.v : b.v - a.v);
 
   // セレクタ（変更で即再読み込み）
   function sel(name, opts, current) {
     let s = '<select name="' + name + '" onchange="this.form.submit()">';
     opts.forEach(o => {
-      s += '<option value="' + o.value + '"' + (o.value === current ? ' selected' : '') + '>' +
-        esc(o.label) + '</option>';
+      // 種目の値は成績シートの見出しから作るのでエスケープする
+      s += '<option value="' + esc(o.value).replace(/"/g, "&quot;") + '"' +
+        (o.value === current ? ' selected' : '') + '>' + esc(o.label) + '</option>';
     });
     return s + '</select>';
   }
@@ -3404,25 +3552,26 @@ function renderStats(type, statId, period) {
   // ランキング表（同値は同順位）
   let t = '<div class="tbl"><table class="st"><tr><th style="width:3em">順位</th>' +
     '<th class="name">選手名</th><th>' + esc(def.label) + '</th>' +
-    (isBat ? '<th>打席</th>' : '<th>投球回</th>') + '</tr>';
+    '<th>' + esc(subLabel) + '</th></tr>';
   let rank = 0, shown = 0, prev = null;
   list.forEach(e => {
     shown++;
     if (prev === null || e.v !== prev) rank = shown;
     prev = e.v;
-    const disp = def.fmt ? def.fmt(e.v) : String(e.v);
     t += '<tr><td>' + rank + '</td><td class="name">' + plink(url, e.name) + '</td>' +
-      '<td><b>' + disp + '</b></td>' +
-      (isBat ? '<td>' + e.d.pa + '</td>' : '<td>' + ipStr(e.d.outs) + '</td>') + '</tr>';
+      '<td><b>' + esc(e.disp) + '</b></td><td>' + esc(e.sub) + '</td></tr>';
   });
   if (list.length === 0) t += '<tr><td colspan="4">対象者がいません</td></tr>';
   t += '</table></div>';
   body += t;
+  const notes = [];
   if (def.rate) {
-    body += '<p class="sub">※ ' + (isBat ? '規定打席: ' + BAT_MIN_PA + '打席以上'
-      : '規定投球回: ' + ipStr(PIT_MIN_OUTS) + '回以上') +
-      (def.asc ? '（数値が小さいほど上位）' : '') + '</p>';
+    notes.push(isBat ? '規定打席: ' + BAT_MIN_PA + '打席以上'
+      : '規定投球回: ' + ipStr(PIT_MIN_OUTS) + '回以上');
   }
+  if (def.asc) notes.push('数値が小さいほど上位');
+  if (!useSheet && isCareer) notes.push('全シーズン通算は試合記録からの集計のため、種目は基本指標のみです');
+  notes.forEach(function (n) { body += '<p class="sub">※ ' + esc(n) + '</p>'; });
   return page("個人成績", body, false);
 }
 
