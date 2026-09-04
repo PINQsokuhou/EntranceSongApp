@@ -22,7 +22,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v61";
+const SITE_VER = "site v62";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -2547,6 +2547,54 @@ function testGemini() {
     { muteHttpExceptions: true }
   );
   Logger.log("HTTP " + res.getResponseCode() + (res.getResponseCode() === 200 ? " → 接続OK" : " → " + res.getContentText().slice(0, 200)));
+}
+
+// ---- 犠飛の記録もれを直す（一度きりの修復用）----
+// 記録アプリから「犠牲」ボタンが無くなったあと、犠飛が「フライ」のまま記録されていた。
+// 結果が「フライ」だと打数に数えられてしまうので（成績シートの打数の数式もサイトも、
+// 結果が「犠飛」かどうかで打数から除いている）、該当行の結果を「犠飛」に書き換える。
+//   対象: 結果=フライ かつ 得点>0（＝フライアウトで走者が生還した打席）
+//   対象外: 結果=ゴロ で得点が入った打席（内野ゴロの間の得点。これは打数に数える）
+// 使い方: まず fixSacFliesDryRun() で対象を確認 → 問題なければ fixSacFlies() を実行。
+function fixSacFliesDryRun() { return sacFlyFix_(false); }
+function fixSacFlies() { return sacFlyFix_(true); }
+
+function sacFlyFix_(apply) {
+  const book = ss();
+  const L = layoutOf(book);
+  const need = Math.max(L.result, L.runs, L.batter) + 1;
+  const logs = [];
+  let total = 0;
+  book.getSheets().forEach(function (sh) {
+    const name = sh.getName();
+    // 打席記録のシートだけを見る（日付シート または 「〜経過」シート）
+    if (!/^\d{4}-?\d{2}-?\d{2}/.test(name) && name.indexOf("経過") < 0) return;
+    const last = sh.getLastRow();
+    if (last < 2 || sh.getMaxColumns() < need) return;
+    const v = sh.getRange(1, 1, last, need).getValues();
+    const hits = [];
+    for (let r = 1; r < v.length; r++) {
+      if (String(v[r][L.batter] || "") === "") continue;
+      if (String(v[r][L.result] || "").trim() !== "フライ") continue;
+      if ((Number(v[r][L.runs]) || 0) <= 0) continue;
+      hits.push(r + 1); // シート上の行番号（1始まり）
+      logs.push("  " + name + " 行" + (r + 1) + "  " + ymd(v[r][0]) + " " +
+        v[r][L.batter] + "（得点" + v[r][L.runs] + "）");
+    }
+    if (apply) {
+      hits.forEach(function (rn) { sh.getRange(rn, L.result + 1).setValue("犠飛"); });
+    }
+    total += hits.length;
+  });
+  if (apply && total) {
+    SpreadsheetApp.flush();
+    invalidatePageCaches(); // 成績の作り置きを捨てて次の表示で作り直させる
+  }
+  const msg = (apply ? "「犠飛」に書き換えました: " : "書き換え対象（まだ変更していません）: ") +
+    total + " か所\n" + logs.join("\n") +
+    (apply ? "" : "\n\n問題なければ fixSacFlies() を実行してください。");
+  Logger.log(msg);
+  return msg;
 }
 
 function isHitResult(res) { return /塁打$/.test(res); }

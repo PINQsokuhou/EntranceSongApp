@@ -43,6 +43,9 @@ object SheetMapper {
         Scorebook.RESULT_NHNE -> "${(log.basesGained - log.errors).coerceIn(1, 4)}塁打"
         Scorebook.RESULT_OUT ->
             if (log.situations.contains("併殺")) "併殺"
+            // フライアウトで走者が生還したら犠飛。「フライ」のままだと打数に数えられてしまう
+            // （成績シートもサイトも O列＝結果 が「犠飛」かどうかで打数から除いている）
+            else if (log.playResult == "フライ" && log.runs > 0) "犠飛"
             else (log.playResult ?: "ゴロ") // ゴロ / フライ / ライナー
         Scorebook.RESULT_ERROR -> "失策"
         Scorebook.RESULT_SAC -> "犠飛"

@@ -321,7 +321,12 @@ function resultCell(log){
   switch (log.resultType) {
     case RESULT_HIT: return Math.min(4, Math.max(1, log.basesGained)) + '塁打';
     case RESULT_NHNE: return Math.min(4, Math.max(1, log.basesGained - log.errors)) + '塁打';
-    case RESULT_OUT: return (log.situations.indexOf('併殺') >= 0) ? '併殺' : (log.playResult || 'ゴロ');
+    case RESULT_OUT:
+      if (log.situations.indexOf('併殺') >= 0) return '併殺';
+      // フライアウトで走者が生還したら犠飛。「フライ」のままだと打数に数えられてしまう
+      // （成績シートもサイトも O列＝結果 が「犠飛」かどうかで打数から除いている）
+      if (log.playResult === 'フライ' && (log.runs || 0) > 0) return '犠飛';
+      return log.playResult || 'ゴロ';
     case RESULT_ERROR: return '失策';
     case RESULT_SAC: return '犠飛';
     case RESULT_SQUEEZE: return 'スクイズ';
