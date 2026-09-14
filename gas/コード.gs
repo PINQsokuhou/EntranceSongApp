@@ -22,7 +22,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v63";
+const SITE_VER = "site v64";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -1012,12 +1012,22 @@ function gameSummaries(names) {
 
   const map = {};
   let dirty = false;
-  names.forEach(function (n) {
-    if (store[n]) { map[n] = store[n]; return; }
+  const book = ss();
+  names.forEach(function (n, i) {
+    // 直近3試合だけはシートの行数を見て、中身が入れ替わっていたら作り直す。
+    // （試験の試合を消して同じ名前で本番を保存すると、名前が同じまま中身が変わるため）
+    // 古い試合まで毎回確認すると一覧が遅くなるので、確認は新しいものに限る。
+    let lr = null;
+    if (i < 3) {
+      try { const sh = book.getSheetByName(n); lr = sh ? sh.getLastRow() : null; } catch (e) {}
+    }
+    const cached = store[n];
+    if (cached && (lr === null || cached.lr === lr)) { map[n] = cached; return; }
     const rows = rowsOf(n);
     if (rows.length === 0) return;
     const l = lineScore(rows), tn = teamNames(rows);
     const o = { st: rows[0].stadium, f: tn.f, s: tn.s, a: l.scoreF, b: l.scoreS };
+    if (lr !== null) o.lr = lr; // 行数の指紋（入れ替わり検知用）
     map[n] = o;
     store[n] = o;
     dirty = true;
@@ -2465,20 +2475,88 @@ function geminiKey() {
   return PropertiesService.getScriptProperties().getProperty("GEMINI_API_KEY") || "";
 }
 
-/** 保存済みの戦評を取得（シート名で引く） */
+/** 保存済みの戦評を取得（シート名で引く）
+ * A列の "2026-09-13" は日付に自動変換されていることがあるので、tsKeyOf で文字列に揃えて比べる。
+ * 同じ試合の行が複数あるときは一番新しい（下の）行を使う。 */
 function getReview(sheetName) {
   const sh = ss().getSheetByName(REVIEW_SHEET);
-  if (!sh) return "";
-  const v = sh.getDataRange().getValues();
+  if (!sh || sh.getLastRow() < 1) return "";
+  const v = sh.getRange(1, 1, sh.getLastRow(), 2).getValues();
+  let found = "";
   for (let r = 0; r < v.length; r++) {
-    if (String(v[r][0]) === sheetName) return String(v[r][1] || "");
+    if (tsKeyOf(v[r][0]) === String(sheetName)) found = String(v[r][1] || "");
   }
-  return "";
+  return found;
 }
 
 function saveReview(sheetName, text) {
   const sh = ss().getSheetByName(REVIEW_SHEET) || ss().insertSheet(REVIEW_SHEET);
-  sh.appendRow([sheetName, text, new Date()]);
+  // appendRow だと "2026-09-13" が日付に変換されて二度と照合できなくなるため、
+  // A列を文字列書式にしてから書く（タイムスタンプシートと同じ対策）
+  const r = sh.getLastRow() + 1;
+  sh.getRange(r, 1).setNumberFormat("@");
+  sh.getRange(r, 1, 1, 3).setValues([[String(sheetName), text, new Date()]]);
+}
+
+// 戦評シートの整理（1回実行）:
+//  ・日付に変換されてしまったA列を文字列のシート名に直す
+//  ・同じ試合の行が複数あれば、一番新しい1行だけ残す
+// 過去、A列が日付になった試合は照合に失敗して開くたびに再生成されていた（＝行が増え続けていた）。
+function repairReviewSheet() {
+  const sh = ss().getSheetByName(REVIEW_SHEET);
+  if (!sh || sh.getLastRow() < 1) return "戦評シートがありません";
+  const v = sh.getDataRange().getValues();
+  const keep = {};   // key → [row values]（後の行で上書き＝最新を残す）
+  const order = [];
+  v.forEach(function (row) {
+    const key = tsKeyOf(row[0]);
+    if (!key) return;
+    if (!(key in keep)) order.push(key);
+    keep[key] = [key, row[1], row[2]];
+  });
+  const out = order.map(function (k) { return keep[k]; });
+  const removed = v.length - out.length;
+  sh.clearContents();
+  if (out.length) {
+    sh.getRange(1, 1, out.length, 1).setNumberFormat("@");
+    sh.getRange(1, 1, out.length, 3).setValues(out);
+  }
+  invalidatePageCaches();
+  const msg = "戦評シートを整理しました: " + v.length + " 行 → " + out.length + " 行（重複 " + removed + " 行を削除、A列を文字列に統一）";
+  Logger.log(msg);
+  return msg;
+}
+
+// 試験の試合を消して同じ名前で本番を保存した、などでシートの中身が入れ替わったときに、
+// その試合に紐づく作り置き（一覧カードのキャッシュ・戦評・ページキャッシュ）を捨てて作り直させる。
+//   例: refreshGame("2026-09-13-2")
+function refreshGame(sheetName) {
+  const name = String(sheetName || "").trim();
+  if (!name) return "シート名を指定してください。例: refreshGame(\"2026-09-13-2\")";
+  const notes = [];
+  // 1) 一覧カードのキャッシュ（スクリプトプロパティ）
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const key = gameSummaryKey();
+    const store = JSON.parse(props.getProperty(key) || "{}");
+    if (store[name]) { delete store[name]; props.setProperty(key, JSON.stringify(store)); notes.push("一覧カードのキャッシュを削除"); }
+  } catch (e) {}
+  // 2) 戦評
+  const sh = ss().getSheetByName(REVIEW_SHEET);
+  if (sh && sh.getLastRow() >= 1) {
+    const v = sh.getRange(1, 1, sh.getLastRow(), 1).getValues();
+    let n = 0;
+    for (let r = v.length - 1; r >= 0; r--) {
+      if (tsKeyOf(v[r][0]) === name) { sh.deleteRow(r + 1); n++; }
+    }
+    if (n) notes.push("戦評 " + n + " 行を削除（次に開いたとき作り直します）");
+  }
+  // 3) ページのキャッシュ
+  invalidatePageCaches();
+  notes.push("ページキャッシュを削除");
+  const msg = name + ": " + notes.join(" / ");
+  Logger.log(msg);
+  return msg;
 }
 
 /** 戦評を返す。未生成なら生成して保存（1試合につき1回だけAPIを呼ぶ） */
