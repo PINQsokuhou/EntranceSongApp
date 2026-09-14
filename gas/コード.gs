@@ -30,6 +30,8 @@ const SITE_PASSWORD = "pingpong";
 // アプリ配布: APK を Drive にアップして共有リンク（またはファイルID）をここに貼ると、
 // 試合一覧ページに「アプリをダウンロード」ボタンが出る。空なら非表示。
 const APK_URL = "";
+// 配布中のアプリのバージョン（app/build.gradle.kts の versionName と合わせる）。カードに表示するだけ
+const APK_VER = "3.2";
 
 // 率系ランキング（打率・防御率など）の規定ライン
 const BAT_MIN_PA = 10;   // 打者: 10打席以上
@@ -3750,9 +3752,11 @@ function renderIndex() {
   // アプリ配布リンク（APK_URL 設定時のみ表示）。Driveのプレビューページ経由が最も確実
   const apkId = fileId(APK_URL);
   if (apkId) {
+    // バージョンを出しておくと、メンバーが自分のアプリが古いかどうか判断できる
+    const ver = APK_VER ? '　v' + esc(APK_VER) : '';
     body += '<a class="card" target="_top" href="https://drive.google.com/file/d/' + apkId + '/view">' +
-      '<div class="d">📲 記録アプリをダウンロード（Android）</div>' +
-      '<div style="font-size:.85em;color:#9fa3ad;margin-top:2px">開いた画面の⬇ダウンロードでAPKを保存 → インストール</div></a>';
+      '<div class="d">📲 記録アプリをダウンロード（Android）' + ver + '</div>' +
+      '<div style="font-size:.85em;color:#9fa3ad;margin-top:2px">開いた画面の⬇ダウンロードでAPKを保存 → インストール（上書き更新できます）</div></a>';
   }
 
   // 試合中（速報枠1〜LIVE_SLOTS を全部並べる）。アーカイブ（過去シーズン）表示中は出さない
