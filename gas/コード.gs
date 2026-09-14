@@ -2530,9 +2530,20 @@ function repairReviewSheet() {
 // 試験の試合を消して同じ名前で本番を保存した、などでシートの中身が入れ替わったときに、
 // その試合に紐づく作り置き（一覧カードのキャッシュ・戦評・ページキャッシュ）を捨てて作り直させる。
 //   例: refreshGame("2026-09-13-2")
+// エディタのプルダウンから実行すると引数なしで呼ばれるので、そのときは
+// 「一番新しい日付の試合すべて」を対象にする（試験→本番の入れ替えは同じ日に起きるため）。
 function refreshGame(sheetName) {
   const name = String(sheetName || "").trim();
-  if (!name) return "シート名を指定してください。例: refreshGame(\"2026-09-13-2\")";
+  if (!name) {
+    const names = gameSheetNames().sort();
+    if (!names.length) return "試合シートがありません";
+    const latest = names[names.length - 1].slice(0, 10); // "2026-09-13"
+    const targets = names.filter(function (n) { return n.indexOf(latest) === 0; });
+    const out = targets.map(function (n) { return refreshGame(n); });
+    const msg = "最新日 " + latest + " の " + targets.length + " 試合を作り直します:\n" + out.join("\n");
+    Logger.log(msg);
+    return msg;
+  }
   const notes = [];
   // 1) 一覧カードのキャッシュ（スクリプトプロパティ）
   try {
