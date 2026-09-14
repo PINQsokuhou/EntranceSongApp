@@ -115,7 +115,7 @@ data class AtBatLog(
     val playResult: String? = null,
     /** 打球性質（記録用）: ゴロ / ライナー / フライ */
     val ballType: String? = null,
-    /** バット種類 r,d,y,t,i,w,b,o */
+    /** バット種類 r,d,y,t,g,i,w,b,o */
     val batType: String? = null,
     /** 個別状況（併殺、タッチアップ、ワンファンブル、スクイズ成否 など） */
     val situations: List<String> = emptyList(),

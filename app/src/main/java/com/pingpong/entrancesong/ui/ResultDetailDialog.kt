@@ -41,7 +41,7 @@ import com.pingpong.entrancesong.data.PendingResult
 import com.pingpong.entrancesong.game.GameEngine
 import com.pingpong.entrancesong.game.Scorebook
 
-/** バット種類 r,d,y,t,i,w,b,o（色は記録員が見分けやすいよう実物の色に合わせる） */
+/** バット種類 r,d,y,t,g,i,w,b,o（色は記録員が見分けやすいよう実物の色に合わせる） */
 private data class BatDef(
     val code: String,
     val label: String,
@@ -66,6 +66,7 @@ private val BAT_DEFS = listOf(
             0.0f to TIGER_YELLOW, 0.5f to TIGER_YELLOW, 0.5f to TIGER_BLACK, 1.0f to TIGER_BLACK
         )
     ),
+    BatDef("g", "g 緑", Color(0xFF2E7D32), Color.White),
     BatDef("i", "i 違反", Color(0xFFF57C00), Color.White),        // 違反=オレンジ
     BatDef("w", "w 白", Color.White, Color.Black, border = Color(0xFF9E9E9E)),
     BatDef("b", "b 黒", TIGER_BLACK, Color.White),
@@ -327,18 +328,14 @@ fun ResultDetailDialog(pending: PendingResult) {
                 run {
                     // 1: バット種類は全結果（四球・死球なども含む）で選択できるようにする
                     SectionLabel("バット種類")
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        BAT_DEFS.take(4).forEach { b ->
-                            BatBox(b, selected = batType == b.code, modifier = Modifier.weight(1f)) {
-                                batType = b.code
-                            }
-                        }
-                    }
-                    Spacer(Modifier.height(4.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        BAT_DEFS.drop(4).forEach { b ->
-                            BatBox(b, selected = batType == b.code, modifier = Modifier.weight(1f)) {
-                                batType = b.code
+                    // 9種類を3×3で並べる（緑を追加して4+4に収まらなくなったため）
+                    BAT_DEFS.chunked(3).forEachIndexed { rowIdx, rowDefs ->
+                        if (rowIdx > 0) Spacer(Modifier.height(4.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            rowDefs.forEach { b ->
+                                BatBox(b, selected = batType == b.code, modifier = Modifier.weight(1f)) {
+                                    batType = b.code
+                                }
                             }
                         }
                     }

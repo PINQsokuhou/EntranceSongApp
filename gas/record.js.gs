@@ -1549,6 +1549,7 @@ var BAT_DEFS = [
   { code: 'd', label: 'd 竜', bg: '#1565C0', fg: '#fff' },
   { code: 'y', label: 'y 黄', bg: '#FDD835', fg: '#000' },
   { code: 't', label: 't 虎', bg: 'linear-gradient(90deg,#FDD835 50%,#212121 50%)', fg: '#fff' },
+  { code: 'g', label: 'g 緑', bg: '#2E7D32', fg: '#fff' },
   { code: 'i', label: 'i 違反', bg: '#F57C00', fg: '#fff' },
   { code: 'w', label: 'w 白', bg: '#fff', fg: '#000', border: '#9E9E9E' },
   { code: 'b', label: 'b 黒', bg: '#212121', fg: '#fff' },
@@ -1653,10 +1654,13 @@ function renderResultModal(){
     h += '<div class="sectionlabel">打球性質（記録用）</div><div class="grid3">' +
       BALL_TYPES.map(function(t){ return selBox(t, m.ballType === t, 'RB.setPopup(\\'ballType\\',' + jsStr(t) + ')'); }).join('') + '</div>';
   }
-  h += '<div class="sectionlabel">バット種類</div><div class="grid4">' +
-    BAT_DEFS.slice(0, 4).map(function(b){ return batBox(b, m.batType === b.code); }).join('') + '</div>' +
-    '<div class="spacer8"></div><div class="grid4">' +
-    BAT_DEFS.slice(4).map(function(b){ return batBox(b, m.batType === b.code); }).join('') + '</div>';
+  // 9種類を3×3で並べる（緑を追加して4+4に収まらなくなったため）
+  h += '<div class="sectionlabel">バット種類</div>';
+  for (var bi = 0; bi < BAT_DEFS.length; bi += 3) {
+    if (bi > 0) h += '<div class="spacer8"></div>';
+    h += '<div class="grid3">' +
+      BAT_DEFS.slice(bi, bi + 3).map(function(b){ return batBox(b, m.batType === b.code); }).join('') + '</div>';
+  }
 
   if (batted && !isSqueeze) {
     h += '<div class="sectionlabel">個別状況</div><div class="grid2">' +
