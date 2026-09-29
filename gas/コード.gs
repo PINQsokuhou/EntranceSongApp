@@ -31,7 +31,7 @@ const SITE_PASSWORD = "pingpong";
 // 試合一覧ページに「アプリをダウンロード」ボタンが出る。空なら非表示。
 const APK_URL = "";
 // 配布中のアプリのバージョン（app/build.gradle.kts の versionName と合わせる）。カードに表示するだけ
-const APK_VER = "3.2";
+const APK_VER = "3.3";
 
 // 率系ランキング（打率・防御率など）の規定ライン
 const BAT_MIN_PA = 10;   // 打者: 10打席以上
