@@ -1335,28 +1335,27 @@ function renderMusic() {
       '<div class="mn">' + esc(m.name) +
       (m.furigana ? '<span class="furi">' + esc(m.furigana) + '</span>' : '') +
       '</div>';
+    // 「アーティスト/曲名」を分ける
+    function split(t) {
+      var parts = String(t).split("/");
+      return parts.length > 1
+        ? { artist: parts[0].trim(), title: parts.slice(1).join("/").trim() }
+        : { artist: "", title: String(t) };
+    }
     if (m.bat.length > 0) {
       body += '<div class="ml">打席曲</div>';
       m.bat.forEach(function (t, i) {
-        var parts = t.split("/");
-        var artist = parts.length > 1 ? parts[0].trim() : "";
-        var title = parts.length > 1 ? parts.slice(1).join("/").trim() : t;
+        var s = split(t);
         // 複数曲登録時は選曲ルール（N曲中i曲目 → Nn+i打席で使用）をバッジで表示
-        var cyc = m.bat.length > 1 ? '<span class="sl">' + m.bat.length + 'n+' + (i + 1) + '打席</span> ' : '';
-        body += '<div class="mt">' + cyc + '<span class="tt">' + esc(title) + '</span>' +
-          (artist ? '<span class="ar">' + esc(artist) + '</span>' : '') + '</div>';
-        body += musicEmbedHtml(m.batSpotify[i] || "");
+        var cyc = m.bat.length > 1 ? '<span class="sl">' + m.bat.length + 'n+' + (i + 1) + '打席</span>' : '';
+        body += songRowHtml(cyc, s.title, s.artist, m.batSpotify[i] || "");
       });
     }
     if (m.pit.length > 0) {
       body += '<div class="ml">投手曲</div>';
       m.pit.forEach(function (t, i) {
-        var parts = t.split("/");
-        var artist = parts.length > 1 ? parts[0].trim() : "";
-        var title = parts.length > 1 ? parts.slice(1).join("/").trim() : t;
-        body += '<div class="mt"><span class="tt">' + esc(title) + '</span>' +
-          (artist ? '<span class="ar">' + esc(artist) + '</span>' : '') + '</div>';
-        body += musicEmbedHtml(m.pitSpotify[i] || "");
+        var s = split(t);
+        body += songRowHtml("", s.title, s.artist, m.pitSpotify[i] || "");
       });
     }
     var hasSit = m.sit.some(function (x) { return x !== null; });
@@ -1364,18 +1363,15 @@ function renderMusic() {
       body += '<div class="ml">状況別</div>';
       m.sit.forEach(function (s, i) {
         if (!s) return;
-        var parts = s.title.split("/");
-        var artist = parts.length > 1 ? parts[0].trim() : "";
-        var title = parts.length > 1 ? parts.slice(1).join("/").trim() : s.title;
-        body += '<div class="mt"><span class="sl">' + esc(s.label) + '</span> ' +
-          '<span class="tt">' + esc(title) + '</span>' +
-          (artist ? '<span class="ar">' + esc(artist) + '</span>' : '') + '</div>';
-        body += musicEmbedHtml(m.sitSpotify[i] || "");
+        var sp = split(s.title);
+        body += songRowHtml('<span class="sl">' + esc(s.label) + '</span>',
+          sp.title, sp.artist, m.sitSpotify[i] || "");
       });
     }
     body += '</div>';
   });
 
+  body += musicLazyScript();
   return page("登場曲紹介", body, false);
 }
 
@@ -1404,31 +1400,50 @@ function youtubeVideoId(url) {
 function musicEmbedHtml(url) {
   var tid = spotifyTrackId(url);
   if (tid) {
-    return '<iframe style="border-radius:12px;margin:4px 0 8px" src="https://open.spotify.com/embed/track/' +
+    return '<iframe style="border-radius:12px" data-src="https://open.spotify.com/embed/track/' +
       tid + '?utm_source=generator&theme=0" width="100%" height="152" frameborder="0" ' +
       'allow="autoplay;clipboard-write;encrypted-media;fullscreen;picture-in-picture" loading="lazy"></iframe>';
-  }
-  // YouTube Music は埋め込みができないので、リンクのボタンにする。
-  // （MVが公開されていない曲は、音源はあっても埋め込み再生できないことがある）
-  if (/music\.youtube\.com/.test(String(url))) {
-    const isSearch = /\/search/.test(String(url));
-    return '<a href="' + esc(url) + '" target="_blank" rel="noopener" ' +
-      'style="display:flex;align-items:center;gap:9px;background:#17181d;border:1px solid #26272e;' +
-      'border-radius:12px;padding:11px 13px;margin:4px 0 8px;text-decoration:none">' +
-      '<span style="color:#ff0033;font-size:1.05em;line-height:1">▶</span>' +
-      '<span style="color:#e9e9ec;font-size:.9em">YouTube Musicで' + (isSearch ? '探す' : '聴く') + '</span>' +
-      '<span style="margin-left:auto;color:#9fa3ad;font-size:.8em">↗</span></a>';
   }
   var vid = youtubeVideoId(url);
   if (vid) {
     // 16:9を保つため、高さは幅から決める（端末幅に依らず崩れない）
-    return '<div style="position:relative;width:100%;padding-bottom:56.25%;margin:4px 0 8px">' +
+    return '<div style="position:relative;width:100%;padding-bottom:56.25%">' +
       '<iframe style="position:absolute;top:0;left:0;width:100%;height:100%;border:0;border-radius:12px" ' +
-      'src="https://www.youtube.com/embed/' + vid + '" ' +
+      'data-src="https://www.youtube.com/embed/' + vid + '" ' +
       'allow="accelerometer;clipboard-write;encrypted-media;gyroscope;picture-in-picture" ' +
       'allowfullscreen loading="lazy"></iframe></div>';
   }
   return "";
+}
+
+// 1曲ぶんの行。曲名の一覧を主役にして、プレイヤーは開いたときだけ読み込む。
+//   埋め込める曲          → 行をタップすると下にプレイヤーが開く
+//   YouTube Musicのみの曲 → 行の右端に外部リンクのタグを出す（埋め込みできないため）
+//   リンクが無い曲        → 曲名だけの行
+function songRowHtml(badge, title, artist, url) {
+  // 曲名とアーティスト名はひとまとまりにして、右端のボタンと分ける
+  // （長い曲名が折り返したときにアーティスト名が右へ飛ばされないように）
+  const head = (badge || "") + '<span class="ti"><span class="tt">' + esc(title) + '</span>' +
+    (artist ? '<span class="ar">' + esc(artist) + '</span>' : '') + '</span>';
+  const u = String(url || "");
+  if (/music\.youtube\.com/.test(u)) {
+    const isSearch = /\/search/.test(u);
+    return '<div class="mt">' + head + '<a class="ytm" href="' + esc(u) +
+      '" target="_blank" rel="noopener">♪ ' + (isSearch ? '探す' : 'YouTube Music') + '</a></div>';
+  }
+  const emb = musicEmbedHtml(u);
+  if (!emb) return '<div class="mt">' + head + '</div>';
+  return '<details class="sg"><summary class="mt">' + head + '<span class="pl">▶ 再生</span></summary>' +
+    '<div class="emb">' + emb + '</div></details>';
+}
+
+// 開いたときに初めて iframe を読み込む（閉じている曲は通信しない）
+function musicLazyScript() {
+  return '<script>document.addEventListener("toggle",function(e){' +
+    'var d=e.target;if(d.tagName!=="DETAILS"||!d.open)return;' +
+    'var f=d.querySelector("iframe[data-src]");' +
+    'if(f){f.src=f.getAttribute("data-src");f.removeAttribute("data-src");}' +
+    '},true);</script>';
 }
 
 // ---------------- Spotifyリンクの自動入力 ----------------
@@ -4229,9 +4244,22 @@ function page(title, body, autoRefresh) {
     '.mn{font-size:1.05em;font-weight:700;margin-bottom:8px}' +
     '.furi{color:#9fa3ad;font-size:.75em;font-weight:400;margin-left:8px}' +
     '.ml{color:#f5a623;font-size:.72em;font-weight:700;margin:10px 0 4px;padding-left:2px}' +
-    '.mt{margin:2px 0}.mt .tt{font-weight:600;font-size:.92em}' +
+    // 曲は「1行＝1曲」の一覧を主役にして、プレイヤーはタップしたときだけ開く。
+    // 全曲ぶんの埋め込みを常に出すと画面が埋まってしまうため。
+    '.mt{display:flex;align-items:center;gap:6px;padding:9px 2px;border-top:1px solid #23242b}' +
+    '.ml + .mt,.ml + .sg .mt{border-top:none}' +
+    '.mt .ti{flex:1;min-width:0}' +
+    '.mt .tt{font-weight:600;font-size:.92em}' +
     '.mt .ar{color:#9fa3ad;font-size:.78em;margin-left:6px}' +
-    '.mt .sl{background:#f5a623;color:#fff;font-size:.68em;font-weight:700;padding:1px 5px;border-radius:3px;margin-right:4px}' +
+    '.mt .sl{background:#f5a623;color:#fff;font-size:.68em;font-weight:700;padding:1px 5px;border-radius:3px;flex:none}' +
+    '.sg>summary{list-style:none;cursor:pointer}' +
+    '.sg>summary::-webkit-details-marker{display:none}' +
+    '.pl{margin-left:auto;flex:none;color:#9fa3ad;font-size:.72em;line-height:1;' +
+    'border:1px solid #33343c;border-radius:999px;padding:4px 10px}' +
+    '.sg[open] .pl{color:#0d0d10;background:#e9e9ec;border-color:#e9e9ec}' +
+    '.emb{padding:2px 0 10px}' +
+    '.ytm{margin-left:auto;flex:none;color:#9fa3ad;font-size:.72em;line-height:1;text-decoration:none;' +
+    'border:1px solid #33343c;border-radius:999px;padding:4px 10px}' +
     '</style></head><body>' + (SITE_PASSWORD ? '<div id="gate" style="max-width:320px;margin:80px auto;text-align:center">' +
     '<h2 style="color:#e9e9ec">🔒 パスワードを入力</h2>' +
     '<input id="pw" type="password" placeholder="パスワード" style="width:100%;padding:12px;border-radius:10px;border:1px solid #33343c;background:#17181d;color:#e9e9ec;font-size:1em;margin:12px 0">' +
