@@ -22,7 +22,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v64";
+const SITE_VER = "site v65";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -1345,13 +1345,7 @@ function renderMusic() {
         var cyc = m.bat.length > 1 ? '<span class="sl">' + m.bat.length + 'n+' + (i + 1) + '打席</span> ' : '';
         body += '<div class="mt">' + cyc + '<span class="tt">' + esc(title) + '</span>' +
           (artist ? '<span class="ar">' + esc(artist) + '</span>' : '') + '</div>';
-        var sp = m.batSpotify[i] || "";
-        var tid = spotifyTrackId(sp);
-        if (tid) {
-          body += '<iframe style="border-radius:12px;margin:4px 0 8px" src="https://open.spotify.com/embed/track/' +
-            tid + '?utm_source=generator&theme=0" width="100%" height="152" frameborder="0" ' +
-            'allow="autoplay;clipboard-write;encrypted-media;fullscreen;picture-in-picture" loading="lazy"></iframe>';
-        }
+        body += musicEmbedHtml(m.batSpotify[i] || "");
       });
     }
     if (m.pit.length > 0) {
@@ -1362,13 +1356,7 @@ function renderMusic() {
         var title = parts.length > 1 ? parts.slice(1).join("/").trim() : t;
         body += '<div class="mt"><span class="tt">' + esc(title) + '</span>' +
           (artist ? '<span class="ar">' + esc(artist) + '</span>' : '') + '</div>';
-        var sp = m.pitSpotify[i] || "";
-        var tid = spotifyTrackId(sp);
-        if (tid) {
-          body += '<iframe style="border-radius:12px;margin:4px 0 8px" src="https://open.spotify.com/embed/track/' +
-            tid + '?utm_source=generator&theme=0" width="100%" height="152" frameborder="0" ' +
-            'allow="autoplay;clipboard-write;encrypted-media;fullscreen;picture-in-picture" loading="lazy"></iframe>';
-        }
+        body += musicEmbedHtml(m.pitSpotify[i] || "");
       });
     }
     var hasSit = m.sit.some(function (x) { return x !== null; });
@@ -1382,13 +1370,7 @@ function renderMusic() {
         body += '<div class="mt"><span class="sl">' + esc(s.label) + '</span> ' +
           '<span class="tt">' + esc(title) + '</span>' +
           (artist ? '<span class="ar">' + esc(artist) + '</span>' : '') + '</div>';
-        var sp = m.sitSpotify[i] || "";
-        var tid = spotifyTrackId(sp);
-        if (tid) {
-          body += '<iframe style="border-radius:12px;margin:4px 0 8px" src="https://open.spotify.com/embed/track/' +
-            tid + '?utm_source=generator&theme=0" width="100%" height="152" frameborder="0" ' +
-            'allow="autoplay;clipboard-write;encrypted-media;fullscreen;picture-in-picture" loading="lazy"></iframe>';
-        }
+        body += musicEmbedHtml(m.sitSpotify[i] || "");
       });
     }
     body += '</div>';
@@ -1403,6 +1385,38 @@ function spotifyTrackId(url) {
   var m = url.match(/track[\/:]([a-zA-Z0-9]+)/);
   if (m) return m[1];
   if (/^[a-zA-Z0-9]{22}$/.test(url.trim())) return url.trim();
+  return "";
+}
+
+// https://youtu.be/ID / https://www.youtube.com/watch?v=ID / /embed/ID / /shorts/ID
+function youtubeVideoId(url) {
+  if (!url) return "";
+  var s = String(url).trim();
+  var m = s.match(/(?:youtu\.be\/|youtube(?:-nocookie)?\.com\/(?:watch\?(?:.*&)?v=|embed\/|shorts\/|live\/))([A-Za-z0-9_-]{11})/);
+  if (m) return m[1];
+  if (/^[A-Za-z0-9_-]{11}$/.test(s)) return s;
+  return "";
+}
+
+// 楽曲リンクの埋め込み。同じ列にSpotifyでもYouTubeでも貼れる。
+// Spotifyは検索APIが所有者のPremium必須になって自動入力が止まったので、
+// これからはYouTubeを使う。既に手で貼ってあるSpotifyリンクはそのまま動く。
+function musicEmbedHtml(url) {
+  var tid = spotifyTrackId(url);
+  if (tid) {
+    return '<iframe style="border-radius:12px;margin:4px 0 8px" src="https://open.spotify.com/embed/track/' +
+      tid + '?utm_source=generator&theme=0" width="100%" height="152" frameborder="0" ' +
+      'allow="autoplay;clipboard-write;encrypted-media;fullscreen;picture-in-picture" loading="lazy"></iframe>';
+  }
+  var vid = youtubeVideoId(url);
+  if (vid) {
+    // 16:9を保つため、高さは幅から決める（端末幅に依らず崩れない）
+    return '<div style="position:relative;width:100%;padding-bottom:56.25%;margin:4px 0 8px">' +
+      '<iframe style="position:absolute;top:0;left:0;width:100%;height:100%;border:0;border-radius:12px" ' +
+      'src="https://www.youtube.com/embed/' + vid + '" ' +
+      'allow="accelerometer;clipboard-write;encrypted-media;gyroscope;picture-in-picture" ' +
+      'allowfullscreen loading="lazy"></iframe></div>';
+  }
   return "";
 }
 
@@ -1822,6 +1836,153 @@ function testSpotifyRaw() {
 function fillSpotifyLinksDryRun() { return fillSpotifyLinksCore(true); }
 // 空欄のセルにSpotifyのURLを書き込む
 function fillSpotifyLinks() { return fillSpotifyLinksCore(false); }
+
+// ---------------- YouTubeリンクの自動入力 ----------------
+// Spotifyの検索APIは所有者のPremium契約が必要になって使えなくなったため、
+// 代わりにYouTubeから探して同じ列に入れる。サイト側は両方を埋め込める。
+// 使い方:
+//   1) Google Cloud Console で「YouTube Data API v3」を有効化し、APIキーを作る
+//   2) プロジェクトの設定 → スクリプト プロパティ に YOUTUBE_API_KEY を追加
+//   3) fillYoutubeLinksDryRun を実行 → ログで結果を確認
+//   4) 問題なければ fillYoutubeLinks を実行 → 空欄のセルにURLを書き込む
+// 無料枠は1日10,000ユニットで、検索1回が100ユニット＝1日100曲まで。
+// 1回の実行では YT_MAX_SEARCH 曲までにして、足りない分は翌日以降に回す。
+const YT_MAX_SEARCH = 90;
+
+function youtubeKey() {
+  return PropertiesService.getScriptProperties().getProperty("YOUTUBE_API_KEY") || "";
+}
+
+// キーを画面から追加できないときに使う。下の "" に貼って1回実行し、実行後は "" に戻すこと。
+function setYoutubeKey() {
+  const KEY = "";
+  if (!KEY) return "この関数の KEY に値を貼ってから実行してください";
+  PropertiesService.getScriptProperties().setProperty("YOUTUBE_API_KEY", KEY.trim());
+  return "YOUTUBE_API_KEY を保存しました（この関数の KEY は \"\" に戻してください）";
+}
+
+/** YouTubeで曲を探して {id, url, title, channel, score} を返す。見つからなければ null */
+function youtubeSearchVideo(artist, title) {
+  const key = youtubeKey();
+  if (!key) throw new Error("スクリプトプロパティに YOUTUBE_API_KEY を設定してください");
+  const q = ((artist ? artist + " " : "") + title).trim();
+  if (!q) return null;
+
+  const url = "https://www.googleapis.com/youtube/v3/search" +
+    "?part=snippet&type=video&maxResults=5" +
+    "&videoEmbeddable=true" +            // 埋め込みできない動画は最初から除く
+    "&videoCategoryId=10" +              // 音楽カテゴリ
+    "&q=" + encodeURIComponent(q) +
+    "&key=" + encodeURIComponent(key);
+  const res = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+  const code = res.getResponseCode();
+  const body = JSON.parse(res.getContentText() || "{}");
+  if (code !== 200) {
+    const reason = (((body.error || {}).errors || [])[0] || {}).reason || "";
+    if (reason === "quotaExceeded") throw new Error("QUOTA");
+    throw new Error("YouTube検索に失敗 (HTTP " + code + "): " + res.getContentText().slice(0, 200));
+  }
+  const items = body.items || [];
+  if (!items.length) return null;
+
+  // 曲名・アーティスト名との近さで選ぶ。公式らしさも少しだけ加点する
+  const wantTitle = normForMatch(title);
+  const wantArtist = normForMatch(artist || "");
+  let best = null;
+  items.forEach(function (it) {
+    const sn = it.snippet || {};
+    const vt = normForMatch(sn.title || "");
+    const ch = normForMatch(sn.channelTitle || "");
+    let sc = similarity(wantTitle, vt);
+    if (vt.indexOf(wantTitle) >= 0) sc = Math.max(sc, 0.85); // 「曲名 / アーティスト【MV】」など
+    if (wantArtist && (vt.indexOf(wantArtist) >= 0 || ch.indexOf(wantArtist) >= 0)) sc += 0.12;
+    if (/official|mv|music ?video|トピック|topic/i.test(sn.title + " " + sn.channelTitle)) sc += 0.05;
+    const cand = {
+      id: it.id.videoId,
+      url: "https://www.youtube.com/watch?v=" + it.id.videoId,
+      title: sn.title || "",
+      channel: sn.channelTitle || "",
+      score: Math.round(Math.min(1, sc) * 100) / 100
+    };
+    if (!best || cand.score > best.score) best = cand;
+  });
+  return best;
+}
+
+function fillYoutubeLinksCore(dryRun, replaceSpotify) {
+  const book = rosterBook();
+  const sh = book.getSheetByName(ROSTER_SHEET);
+  if (!sh) return "「" + ROSTER_SHEET + "」シートが見つかりません";
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return "データがありません";
+  if (!youtubeKey()) return "YOUTUBE_API_KEY が未設定です。プロジェクトの設定 → スクリプト プロパティ に追加してください。";
+
+  const width = Math.max(75, sh.getMaxColumns());
+  const v = sh.getRange(1, 1, lastRow, width).getValues();
+  const pairs = spotifyColPairs(); // 列の対応はSpotifyのときと同じ
+
+  const log = [];
+  let filled = 0, skipped = 0, notFound = 0, searched = 0;
+  let quota = false, capped = false;
+  const writes = [];
+
+  for (let r = 1; r < v.length && !quota && !capped; r++) {
+    const name = stripSpace(v[r][0]);
+    if (!name) continue; // 名前が無い行はURL行なので飛ばす
+    for (let k = 0; k < pairs.length; k++) {
+      const p = pairs[k];
+      const raw = String(v[r][p.title] || "").trim();
+      if (!raw || /^https?:/.test(raw)) continue;                 // 曲名が無い
+      const cur = String(v[r][p.url] || "").trim();
+      if (cur && youtubeVideoId(cur)) { skipped++; continue; }    // 既にYouTubeが入っている
+      if (cur && !replaceSpotify) { skipped++; continue; }        // Spotifyが入っている（置換モードでなければ触らない）
+      if (searched >= YT_MAX_SEARCH) { capped = true; break; }
+
+      const sp = splitSongTitle(raw);
+      let hit = null;
+      try {
+        searched++;
+        hit = youtubeSearchVideo(sp.artist, sp.title);
+      } catch (e) {
+        if (String(e).indexOf("QUOTA") >= 0) { quota = true; break; }
+        hit = null;
+      }
+      Utilities.sleep(120);
+      if (!hit) {
+        notFound++;
+        log.push("× 見つからず  " + name + " " + p.label + " : " + raw);
+        continue;
+      }
+      filled++;
+      const mark = hit.score < 0.6 ? "△ 要確認" : "○";
+      log.push(mark + " " + name + " " + p.label + " : " + raw + "  →  " +
+        hit.title + "（" + hit.channel + " / 一致度 " + hit.score + "）" +
+        (cur ? "  ※Spotifyから置換" : ""));
+      writes.push({ row: r + 1, col: p.url + 1, url: hit.url });
+    }
+  }
+
+  if (!dryRun) {
+    writes.forEach(function (w) { sh.getRange(w.row, w.col).setValue(w.url); });
+    if (writes.length) { SpreadsheetApp.flush(); invalidatePageCaches(); }
+  }
+
+  const head = (dryRun ? "【確認のみ・書き込んでいません】" : "【書き込みました】") +
+    " 対象 " + filled + " 件 / 見つからず " + notFound + " 件 / 既にあり " + skipped + " 件（検索 " + searched + " 回）";
+  const tail = quota ? "\n\n※ 本日の無料枠（1日100曲ぶん）を使い切りました。明日また実行してください。"
+    : capped ? "\n\n※ 1回あたりの上限（" + YT_MAX_SEARCH + "曲）に達しました。もう一度実行すると続きから進みます。" : "";
+  const msg = head + tail + "\n\n" + log.join("\n");
+  Logger.log(msg);
+  return msg;
+}
+
+// 空欄のセルだけを対象に、結果を確認する（書き込まない）
+function fillYoutubeLinksDryRun() { return fillYoutubeLinksCore(true, false); }
+// 空欄のセルにYouTubeのURLを書き込む
+function fillYoutubeLinks() { return fillYoutubeLinksCore(false, false); }
+// 既に入っているSpotifyのURLも含めて、すべてYouTubeに置き換える（まず DryRun で確認すること）
+function fillYoutubeLinksReplaceDryRun() { return fillYoutubeLinksCore(true, true); }
+function fillYoutubeLinksReplace() { return fillYoutubeLinksCore(false, true); }
 
 // ---------------- 曲名を書き換えたら Spotify リンクを自動更新 ----------------
 // 一度だけ installSpotifyAutoUpdate() を実行するとトリガーが登録され、
