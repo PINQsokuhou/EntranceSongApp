@@ -113,14 +113,18 @@ function doGet(e) {
   // raw=1: 静的ホスティングのラッパーページ（site/index.html）から fetch で読む用。
   // Cookieが送られないためGoogleの多重ログイン問題を回避できる。
   // 自身のexec URLを取り除き、リンクをラッパー相対（?view=...）に変換して素のHTMLを返す
-  if (p.raw === "1") {
-    // 公開URL（/exec）と、万一混ざった開発URL（/dev）の両方を取り除いて相対リンクにする
-    let out = h;
-    const urls = [siteUrl(), ScriptApp.getService().getUrl()];
-    urls.forEach(function (u) { if (u) out = out.split(u).join(""); });
-    return ContentService.createTextOutput(out);
-  }
+  if (p.raw === "1") return ContentService.createTextOutput(rawHtml(h));
   return htmlOut(h);
+}
+
+// 公開URL（/exec）と、万一混ざった開発URL（/dev）の両方を取り除いて相対リンクにする。
+// 静的書き出し（publishSite）でも同じ形のHTMLを使う。
+function rawHtml(h) {
+  let out = h;
+  let dev = "";
+  try { dev = ScriptApp.getService().getUrl() || ""; } catch (e) {}
+  [siteUrl(), dev].forEach(function (u) { if (u) out = out.split(u).join(""); });
+  return out;
 }
 
 // ---- 公開URLの記憶 ----
@@ -591,6 +595,8 @@ function saveGameLocked(d) {
   SpreadsheetApp.flush();
   // 試合が増えたので、関係するページのキャッシュを消して次の表示で作り直させる
   invalidatePageCaches();
+  // 静的ファイル（試合一覧＋この試合）も更新しておく。失敗しても保存は成功扱いにする
+  try { if (ghToken()) publishSite([name]); } catch (e) { Logger.log("静的書き出しに失敗: " + e); }
   return { ok: true, sheet: name, allGames: !!allSheet, monthly: monthly ? monthly.getName() : null };
 }
 
@@ -974,6 +980,14 @@ function sheetNamesOf(book) {
 }
 function gameSheetNames() {
   return sheetNamesOf().filter(function (n) { return /^\d{4}-\d{2}-\d{2}/.test(n); });
+}
+
+// 全試合経過は数千行あるので、1回の実行の中では読み直さない。
+// 試合ページを何十枚もまとめて書き出すとき（publishSite）に効く。
+var _allRowsMemo = null;
+function allGameRows() {
+  if (!_allRowsMemo) _allRowsMemo = rowsOf(ALL_GAMES);
+  return _allRowsMemo;
 }
 
 function rowsOf(name, book) {
@@ -2469,6 +2483,142 @@ function createRosterTemplate() {
   }
 }
 
+// ---------------- 静的書き出し（GitHub Pages） ----------------
+// 表示のたびにGASでHTMLを作ると、どんなにキャッシュしても1.5秒前後かかる（GASの起動コスト）。
+// 内容が変わるのは「試合を保存したとき」と「スプシを直したとき」だけなので、
+// そのタイミングで完成したHTMLをGitHubへ書き出し、サイトはCDNから読むようにする。
+//   置き場所: リポジトリの site/data/ 配下（site/index.html と同じ階層なので相対パスで引ける）
+//     site/data/index.html         … 試合一覧
+//     site/data/g/<シート名>.html   … 各試合の詳細
+// 速報(LIVE)と、書き出していないページは今までどおりGASが返す。
+const GH_REPO = "PINQsokuhou/EntranceSongApp";
+const GH_BRANCH = "main";
+const GH_DIR = "site/data";
+
+function ghToken() {
+  return PropertiesService.getScriptProperties().getProperty("GITHUB_TOKEN") || "";
+}
+
+// トークンを画面から登録できないときに使う。下の "" に貼って1回実行し、実行後は "" に戻すこと。
+function setGithubToken() {
+  const TOKEN = "";
+  if (!TOKEN) return "この関数の TOKEN に値を貼ってから実行してください";
+  PropertiesService.getScriptProperties().setProperty("GITHUB_TOKEN", TOKEN);
+  return "GITHUB_TOKEN を保存しました（この関数の TOKEN は \"\" に戻してください）";
+}
+
+function gh_(method, path, payload) {
+  const res = UrlFetchApp.fetch("https://api.github.com/repos/" + GH_REPO + path, {
+    method: method,
+    contentType: "application/json",
+    headers: {
+      Authorization: "Bearer " + ghToken(),
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28"
+    },
+    payload: payload ? JSON.stringify(payload) : undefined,
+    muteHttpExceptions: true
+  });
+  const code = res.getResponseCode();
+  if (code < 200 || code >= 300) {
+    throw new Error("GitHub " + method + " " + path + " → HTTP " + code + " " + res.getContentText().slice(0, 300));
+  }
+  return JSON.parse(res.getContentText());
+}
+
+/** files = [{path:"index.html", content:"<html>…"}] をまとめて1コミットで反映する */
+function ghCommit_(files, message) {
+  if (!files.length) return "書き出すファイルがありません";
+  // 1コミットで済ませる（ファイルごとにAPIを叩くと数が多いとき時間切れになる）
+  const ref = gh_("GET", "/git/ref/heads/" + GH_BRANCH);
+  const head = ref.object.sha;
+  const commit = gh_("GET", "/git/commits/" + head);
+  const tree = gh_("POST", "/git/trees", {
+    base_tree: commit.tree.sha,
+    tree: files.map(function (f) {
+      return { path: GH_DIR + "/" + f.path, mode: "100644", type: "blob", content: f.content };
+    })
+  });
+  const newCommit = gh_("POST", "/git/commits", { message: message, tree: tree.sha, parents: [head] });
+  gh_("PATCH", "/git/refs/heads/" + GH_BRANCH, { sha: newCommit.sha });
+  return newCommit.sha.slice(0, 7);
+}
+
+// シート名 → 書き出し先のファイル名（想定外の文字が入っていたら書き出さない）
+function staticGamePath_(name) {
+  return /^[A-Za-z0-9_-]+$/.test(name) ? ("g/" + name + ".html") : null;
+}
+
+/** 試合一覧＋指定した試合の詳細を書き出す。names を省略すると全試合。 */
+function publishSite(names) {
+  if (!ghToken()) return "GITHUB_TOKEN が未設定です。setGithubToken を使って登録してください。";
+  // 公開URL（/exec）が分かっていないと、リンクに開発URLが焼き付いて開けなくなる
+  const u = siteUrl();
+  if (!u || u.indexOf("/exec") < 0) {
+    return "公開URLが未取得のため中止しました。一度サイトを開いてから再実行してください。";
+  }
+  const started = Date.now();
+  const targets = names && names.length ? names : gameSheetNames();
+  const files = [];
+  const skipped = [];
+
+  _noGenerateReview = true; // まとめ書き出し中はGeminiを呼ばない
+  try {
+    files.push({ path: "index.html", content: rawHtml(renderIndex()) });
+    for (let i = 0; i < targets.length; i++) {
+      // GASは6分で打ち切られる。間に合わない分は次回に回す
+      if (Date.now() - started > 4 * 60 * 1000) {
+        skipped.push.apply(skipped, targets.slice(i));
+        break;
+      }
+      const n = targets[i];
+      const p = staticGamePath_(n);
+      if (!p) { skipped.push(n); continue; }
+      try {
+        files.push({ path: p, content: rawHtml(renderGame(n)) });
+      } catch (e) {
+        skipped.push(n + "(" + e + ")");
+      }
+    }
+  } finally {
+    _noGenerateReview = false;
+  }
+
+  const sha = ghCommit_(files, "サイト静的書き出し: " + files.length + " ファイル (" + SITE_VER + ")");
+  const msg = "書き出しました: " + files.length + " ファイル / コミット " + sha +
+    "（" + Math.round((Date.now() - started) / 1000) + "秒）" +
+    (skipped.length ? "\n未処理（もう一度実行してください）: " + skipped.join(", ") : "") +
+    "\n※ GitHub Pages に反映されるまで20〜60秒ほどかかります。";
+  Logger.log(msg);
+  return msg;
+}
+
+/** 1試合だけ（＋試合一覧）を書き出す。試合保存後や修正後に使う。 */
+function publishGame(sheetName) {
+  const name = String(sheetName || "").trim();
+  if (!name) {
+    // エディタのプルダウンから実行したときは最新日の試合を対象にする
+    const ns = gameSheetNames().sort();
+    if (!ns.length) return "試合シートがありません";
+    const latest = ns[ns.length - 1].slice(0, 10);
+    return publishSite(ns.filter(function (n) { return n.indexOf(latest) === 0; }));
+  }
+  return publishSite([name]);
+}
+
+/** 設定の確認 */
+function publishStatus() {
+  const msg = [
+    "GITHUB_TOKEN: " + (ghToken() ? "設定済み" : "未設定"),
+    "リポジトリ: " + GH_REPO + " / ブランチ: " + GH_BRANCH,
+    "書き出し先: " + GH_DIR + "/",
+    "公開URL: " + (siteUrl() || "(未取得)"),
+    "試合シート数: " + gameSheetNames().length
+  ].join("\n");
+  Logger.log(msg);
+  return msg;
+}
+
 // ---------------- 戦評（Gemini API） ----------------
 
 function geminiKey() {
@@ -2570,10 +2720,15 @@ function refreshGame(sheetName) {
   return msg;
 }
 
+// 静的書き出し中は true。既にある戦評は使うが、無い試合のために新しく生成はしない
+// （65試合ぶんまとめて書き出すときにGeminiを何十回も呼ばないため）
+var _noGenerateReview = false;
+
 /** 戦評を返す。未生成なら生成して保存（1試合につき1回だけAPIを呼ぶ） */
 function ensureReview(sheetName, rows, pb) {
   let t = getReview(sheetName);
   if (t) return t;
+  if (_noGenerateReview) return "";
   if (!geminiKey() || rows.length === 0) return "";
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(2000)) return ""; // 同時アクセスで二重生成しない
@@ -3898,7 +4053,7 @@ function renderGame(name) {
   // シーズン集計は「その試合終了時点」まで。全試合経過は追記順なので、
   // この試合の日付が最後に現れる行までで打ち切る。
   // ライブ中は12秒ごとに再読込されるため、重い全試合経過は読まず当日分のみで集計する
-  let allRows = isLive ? [] : rowsOf(ALL_GAMES);
+  let allRows = isLive ? [] : allGameRows();
   if (!isLive) {
     let lastIdx = -1;
     for (let i = 0; i < allRows.length; i++) {
