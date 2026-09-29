@@ -530,6 +530,9 @@ function defaultState(){
   return {
     started: false, ended: false,
     liveSlot: 0, // 速報枠（0=未割り当て。試合開始時にサーバーが1〜3のどれかを返す）
+    musicOn: false,      // 登場曲・アナウンスを鳴らすか
+    musicPrep: null,     // 音源のダウンロード進捗 {done,total,running,failed}
+    deferSong: false,    // 安打で塁打数の確定を待っている
     startedAt: null, durationMs: 0, paStartMs: null,
     dateLabel: '', stadium: '', stadiumConfirmed: false,
     inning: 1, attacking: 'first',
@@ -817,6 +820,260 @@ function postLiveState(){
   });
 }
 
+// ================= 登場曲・アナウンスの再生 =================
+// アプリ（GameEngine / SongPlayer / AnnouncementPlayer）と同じ選曲ルールをブラウザに移植。
+// 音源はGAS経由でダウンロードして IndexedDB に保存し、試合中は通信せずに鳴らす。
+// iOSは「画面を触っていないと音を鳴らせない」ため、<audio>を1つだけ作って使い回す
+// （一度タップで鳴らせば、以後はプログラムからでも鳴らせる）。
+var MUSIC_DB = 'ppSongs', MUSIC_STORE = 'songs';
+var musicDbP = null, musicEl = null, musicUrl = null;
+var musicSeq = [], musicSeqDone = null, musicFadeTimer = null;
+var announcements = {};   // システムアナウンス（getRoster が返す）
+
+function musicDb(){
+  if (musicDbP) return musicDbP;
+  musicDbP = new Promise(function(res, rej){
+    try {
+      var r = indexedDB.open(MUSIC_DB, 1);
+      r.onupgradeneeded = function(){ r.result.createObjectStore(MUSIC_STORE); };
+      r.onsuccess = function(){ res(r.result); };
+      r.onerror = function(){ rej(r.error); };
+    } catch (e) { rej(e); }
+  });
+  return musicDbP;
+}
+function musicGet(id){
+  return musicDb().then(function(db){
+    return new Promise(function(res){
+      var q = db.transaction(MUSIC_STORE).objectStore(MUSIC_STORE).get(id);
+      q.onsuccess = function(){ res(q.result || null); };
+      q.onerror = function(){ res(null); };
+    });
+  }).catch(function(){ return null; });
+}
+function musicPut(id, blob){
+  return musicDb().then(function(db){
+    return new Promise(function(res, rej){
+      var t = db.transaction(MUSIC_STORE, 'readwrite');
+      t.objectStore(MUSIC_STORE).put(blob, id);
+      t.oncomplete = function(){ res(true); };
+      t.onerror = function(){ rej(t.error); };
+    });
+  });
+}
+/** GASから音源を取ってきて保存する。既にあれば何もしない */
+function musicFetchOne(id){
+  return musicGet(id).then(function(b){
+    if (b) return false;
+    return fetch(GAS_URL + '?action=song&id=' + encodeURIComponent(id), { redirect: 'follow' })
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if (!j || !j.ok || !j.dataBase64) throw new Error(j && j.error ? j.error : '取得できません');
+        var bin = atob(j.dataBase64), n = bin.length, u8 = new Uint8Array(n);
+        for (var i = 0; i < n; i++) u8[i] = bin.charCodeAt(i);
+        return musicPut(id, new Blob([u8], { type: 'audio/mpeg' })).then(function(){ return true; });
+      });
+  });
+}
+
+/** この試合で使う音源のIDを集める（出場メンバーの曲＋アナウンス） */
+function musicNeededIds(){
+  var ids = [], seen = {};
+  function add(s){ if (s && s.id && !seen[s.id]) { seen[s.id] = 1; ids.push(s.id); } }
+  var names = state.firstOrder.concat(state.secondOrder);
+  if (state.pitcherOfFirst) names.push(state.pitcherOfFirst);
+  if (state.pitcherOfSecond) names.push(state.pitcherOfSecond);
+  uniq(names).forEach(function(n){
+    var m = rosterByName(n);
+    if (!m) return;
+    (m.battingSongs || []).forEach(add);
+    (m.pitchingSongs || []).forEach(add);
+    add(m.nameAnnounce); add(m.firstAtBatSong); add(m.chanceSong); add(m.losingChanceSong);
+  });
+  Object.keys(announcements).forEach(function(k){ add(announcements[k]); });
+  return ids;
+}
+
+/** 出場メンバーぶんの音源をまとめて用意する */
+function musicPrepare(){
+  var ids = musicNeededIds();
+  if (!ids.length) { showToast('登録された楽曲がありません'); return; }
+  state.musicPrep = { done: 0, total: ids.length, running: true, failed: 0 };
+  render();
+  var i = 0;
+  function step(){
+    if (i >= ids.length) {
+      state.musicPrep.running = false;
+      saveState(); render();
+      showToast('楽曲の準備が完了しました（' + ids.length + '曲' +
+        (state.musicPrep.failed ? ' / 取得できず ' + state.musicPrep.failed + '曲' : '') + '）');
+      return;
+    }
+    musicFetchOne(ids[i]).catch(function(){ state.musicPrep.failed++; }).then(function(){
+      i++; state.musicPrep.done = i; render();
+      setTimeout(step, 0);
+    });
+  }
+  step();
+}
+
+function musicElem(){
+  if (!musicEl) {
+    musicEl = document.createElement('audio');
+    musicEl.setAttribute('playsinline', '');
+    musicEl.preload = 'auto';
+    musicEl.addEventListener('ended', function(){ musicNextInSeq(); });
+    document.body.appendChild(musicEl);
+  }
+  return musicEl;
+}
+function musicRevoke(){ if (musicUrl) { try { URL.revokeObjectURL(musicUrl); } catch (e) {} musicUrl = null; } }
+function musicPlayBlob(blob){
+  var el = musicElem();
+  if (musicFadeTimer) { clearInterval(musicFadeTimer); musicFadeTimer = null; }
+  musicRevoke();
+  musicUrl = URL.createObjectURL(blob);
+  el.src = musicUrl;
+  el.volume = 1;
+  var p = el.play();
+  if (p && p.catch) p.catch(function(){});
+}
+function musicNextInSeq(){
+  if (!musicSeq.length) {
+    var d = musicSeqDone; musicSeqDone = null;
+    if (d) d();
+    return;
+  }
+  var id = musicSeq.shift();
+  musicGet(id).then(function(b){
+    if (b) musicPlayBlob(b); else musicNextInSeq();   // 未ダウンロードは飛ばす
+  });
+}
+/** ids を順番に鳴らし、全部終わったら onDone を呼ぶ */
+function musicPlayIds(ids, onDone){
+  if (!state.musicOn) { if (onDone) onDone(); return; }
+  musicSeq = (ids || []).slice();
+  musicSeqDone = onDone || null;
+  musicNextInSeq();
+}
+function musicPlayOne(song){
+  if (song && song.id) musicPlayIds([song.id]);
+}
+/** 手動停止は2秒フェードアウト（アプリと同じ） */
+function musicStop(){
+  musicSeq = []; musicSeqDone = null;
+  var el = musicEl;
+  if (!el || el.paused) return;
+  if (musicFadeTimer) clearInterval(musicFadeTimer);
+  var v0 = el.volume, steps = 20, left = steps;
+  musicFadeTimer = setInterval(function(){
+    left--;
+    try { el.volume = Math.max(0, v0 * left / steps); } catch (e) {}
+    if (left <= 0) {
+      clearInterval(musicFadeTimer); musicFadeTimer = null;
+      try { el.pause(); el.volume = 1; } catch (e) {}
+      musicRevoke();
+    }
+  }, 100);
+}
+function musicIsPlaying(){ return !!(musicEl && !musicEl.paused); }
+
+// ---- 選曲（アプリの GameEngine.selectSong と同じ規則） ----
+function songForCount(m, count){
+  var a = (m && m.battingSongs) || [];
+  if (!a.length) return null;
+  var n = a.length, i = ((count - 1) % n + n) % n;
+  return a[i];
+}
+function selectSongWithBases(m, count, bases, runs){
+  if (!m) return null;
+  if (count === 1 && m.firstAtBatSong) return m.firstAtBatSong;
+  if (bases[1] || bases[2]) {   // 得点圏
+    var atk = (state.attacking === 'first' ? state.scoreFirst : state.scoreSecond) + (runs || 0);
+    var def = (state.attacking === 'first' ? state.scoreSecond : state.scoreFirst);
+    if (atk <= def && m.losingChanceSong) return m.losingChanceSong;
+    if (m.chanceSong) return m.chanceSong;
+  }
+  return songForCount(m, count);
+}
+/** 結果ボタンを押した時点の塁状況の先読み（アプリの predictedBases と同じ） */
+function predictedBases(type){
+  var b = state.bases.slice();
+  function adv(n){
+    var next = [false, false, false], runs = 0;
+    for (var i = 2; i >= 0; i--) {
+      if (!b[i]) continue;
+      if (i + n >= 3) runs++; else next[i + n] = true;
+    }
+    if (n >= 1 && n <= 3) next[n - 1] = true;
+    return [next, runs];
+  }
+  if (type === RESULT_OUT) return [b, 0];
+  if (type === RESULT_SAC || type === RESULT_SQUEEZE) {
+    var nx = b.slice(), r = 0;
+    if (nx[2]) { nx[2] = false; r++; }
+    return [nx, r];
+  }
+  if (type === RESULT_NHNE) return adv(2);
+  if (type === RESULT_HIT || type === RESULT_ERROR) return adv(1);
+  var f = b.slice(), fr = (b[0] && b[1] && b[2]) ? 1 : 0;   // 四球・死球・妨害は押し出しのみ
+  if (f[0]) { if (f[1]) { if (!f[2]) f[2] = true; } else f[1] = true; }
+  f[0] = true;
+  return [f, fr];
+}
+
+function nextBatterName(autoChange){
+  var team = autoChange ? defendingTeam() : state.attacking;
+  var order = orderOf(team);
+  if (!order.length) return null;
+  return order[(indexOf(team) + 1) % order.length];
+}
+/** 攻守交代のアナウンス（交代 → 打順 → 名前）のID列 */
+function announceIds(team, inning, orderIndex, m){
+  var ids = [];
+  var ck = (team === 'first' ? 'changeFirst' : 'changeSecond') + inning;
+  if (announcements[ck]) ids.push(announcements[ck].id);
+  var ok = 'order' + (orderIndex + 1);
+  if (announcements[ok]) ids.push(announcements[ok].id);
+  if (m && m.nameAnnounce) ids.push(m.nameAnnounce.id);
+  return ids;
+}
+/** 結果ボタンを押したときの再生。安打だけは塁打数が決まるまで待つ */
+function musicOnResult(type){
+  if (!state.musicOn) return;
+  var autoChange = (state.outs + immediateOuts(type)) >= 3;
+  var name = nextBatterName(autoChange);
+  var m = name ? rosterByName(name) : null;
+  if (!m) return;
+  var count = (state.atBatCounts[name] || 0) + 1;
+  if (autoChange) {
+    var team = defendingTeam();
+    var order = orderOf(team);
+    var inning = (team === 'first') ? state.inning + 1 : state.inning;
+    var pos = order.length ? (indexOf(team) + 1) % order.length : 0;
+    var song = songForCount(m, count);
+    musicPlayIds(announceIds(team, inning, pos, m), function(){ musicPlayOne(song); });
+    state.deferSong = false;
+    return;
+  }
+  var hasChance = !!(m.chanceSong || m.losingChanceSong);
+  if (type === RESULT_HIT && hasChance) { state.deferSong = true; return; } // 塁打数を待つ
+  state.deferSong = false;
+  var pb = predictedBases(type);
+  musicPlayOne(selectSongWithBases(m, count, pb[0], pb[1]));
+}
+/** 安打で待っていた場合に、確定した塁状況で鳴らす */
+function musicOnConfirm(payload, willChange){
+  if (!state.musicOn || !state.deferSong) { state.deferSong = false; return; }
+  state.deferSong = false;
+  if (willChange) return;   // 交代時は musicOnResult 側で鳴らし済み
+  var name = nextBatterName(false);
+  var m = name ? rosterByName(name) : null;
+  if (!m) return;
+  var count = (state.atBatCounts[name] || 0) + 1;
+  musicPlayOne(selectSongWithBases(m, count, payload.finalBases, payload.runs));
+}
+
 function showToast(msg){
   var t = byId('toast');
   if (!t) {
@@ -896,6 +1153,15 @@ function startGame(){
   state.firstIndex = 0; state.secondIndex = -1;
   state.atBatCounts[state.firstOrder[0]] = 1;
   maybePromptPitcher();
+  // 1番打者のアナウンス（交代→打順→名前）と登場曲
+  if (state.musicOn) {
+    var lm = rosterByName(state.firstOrder[0]);
+    if (lm) {
+      var lSong = songForCount(lm, 1) || null;
+      if (lm.firstAtBatSong) lSong = lm.firstAtBatSong;
+      musicPlayIds(announceIds('first', 1, 0, lm), function(){ musicPlayOne(lSong); });
+    }
+  }
   saveState(); render();
   postLiveStart(); postLiveState();
 }
@@ -973,6 +1239,7 @@ function beginResult(type, opts){
     pressMs: Date.now(), // YouTubeタイムスタンプ用: 結果ボタン押下時刻
     hold: !!opts.hold    // 保留（ヒット/エラー紛らわしい）→ 後で協議。記録上はヒットのまま
   };
+  musicOnResult(type);   // 塁状況の先読みで曲をすぐ鳴らし始める（安打だけは確定を待つ）
   openResultPopup();
   saveState(); render();
 }
@@ -1043,6 +1310,7 @@ function confirmResult(payload){
 
   state.balls = 0; state.strikes = 0; state.pitchCount = 0; state.curPitches = [];
   state.pending = null;
+  musicOnConfirm(payload, willChange);   // 安打で待っていた曲をここで鳴らす
   if (willChange) maybePromptPitcher();
   closeModal();
   saveState(); render();
@@ -1066,12 +1334,29 @@ function changeSides(){
     state.atBatCounts[nm] = (state.atBatCounts[nm] || 0) + 1;
   }
   state.paStartMs = Date.now(); // 次打者の打席開始時刻
+  // 手動チェンジ: アナウンス（交代→打順→名前）のあとに打者の曲
+  if (state.musicOn && order.length) {
+    var cm = rosterByName(order[indexOf(state.attacking)]);
+    if (cm) {
+      var cCount = state.atBatCounts[order[indexOf(state.attacking)]] || 1;
+      var cSong = songForCount(cm, cCount);
+      musicPlayIds(announceIds(state.attacking, state.inning, indexOf(state.attacking), cm),
+        function(){ musicPlayOne(cSong); });
+    }
+  }
   maybePromptPitcher();
   saveState(); render(); postLiveState();
 }
 function changePitcher(team, name){
+  var prev = (team === 'first') ? state.pitcherOfFirst : state.pitcherOfSecond;
   if (team === 'first') state.pitcherOfFirst = name; else state.pitcherOfSecond = name;
   state.needPitcherPrompt = false;
+  // 投手が代わったら投手曲（同じ投手の再設定では鳴らさない）
+  if (state.musicOn && name && name !== prev) {
+    var pm = rosterByName(name);
+    var ps = pm && (pm.pitchingSongs || [])[0];
+    if (ps) musicPlayOne(ps);
+  }
   closeModal();
   saveState(); render(); postLiveState();
 }
@@ -1246,6 +1531,8 @@ function renderSetup(){
     (canStart ? '' : 'disabled') + ' onclick="RB.startGame()">試合開始</button>' +
     '</div>';
 
+  h += musicSetupHtml();
+
   // 過去の試合（直近3試合）: 試合時間とYouTube用タイムスタンプ
   var past = loadYtGames();
   if (past.length) {
@@ -1259,6 +1546,35 @@ function renderSetup(){
   }
 
   return h;
+}
+
+/** セットアップ画面の「登場曲」セクション */
+function musicSetupHtml(){
+  var p = state.musicPrep;
+  var h = '<h2>登場曲・アナウンス</h2><div class="card">';
+  h += '<div class="statline"><span>この端末で曲を鳴らす</span>' +
+    '<button class="btn ' + (state.musicOn ? 'res-hit' : 'outline') + '" onclick="RB.toggleMusic()">' +
+    (state.musicOn ? 'ON' : 'OFF') + '</button></div>';
+  if (state.musicOn) {
+    if (p && p.running) {
+      h += '<div class="sub">楽曲を準備中… ' + p.done + ' / ' + p.total + '</div>';
+    } else {
+      h += '<div class="footbtns"><button class="btn outline block" onclick="RB.musicPrepare()">' +
+        (p ? '楽曲を再取得' : '楽曲を準備（ダウンロード）') + '</button></div>';
+      if (p && !p.running) {
+        h += '<div class="sub">' + p.total + '曲を端末に保存済み' +
+          (p.failed ? '（取得できず ' + p.failed + '曲）' : '') + '</div>';
+      }
+    }
+    h += '<div class="sub">打順と先発投手を決めてから準備してください。' +
+      '2回目以降は保存済みのぶんを飛ばします。</div>';
+    h += '<div class="footbtns"><button class="btn gray block" onclick="RB.musicTest()">' +
+      '音が出るか試す（1番打者の曲）</button></div>';
+  } else {
+    h += '<div class="sub">ONにすると、打者の登場曲・チャンス曲・攻守交代のアナウンスを鳴らします。' +
+      'アプリと同じ選曲ルールです。</div>';
+  }
+  return h + '</div>';
 }
 
 // ================= 試合中画面 =================
@@ -1304,6 +1620,8 @@ function renderGame(){
     '<div class="g"><span class="lb">S</span>' + pipsHtml('s', state.strikes, 2) + '</div>' +
     '</div>' +
     '<div class="pitchcount">打席中 ' + state.pitchCount + ' 球</div>' +
+    (state.musicOn ? '<div class="footbtns" style="margin-top:6px">' +
+      '<button class="btn outline block" onclick="RB.musicStop()">♪ 曲を止める</button></div>' : '') +
     '</div>';
 
   var disabled = !!state.pending || state.awaitingStrikeoutChoice || state.needPitcherPrompt;
@@ -1801,7 +2119,7 @@ window.RB = RB;
 // ================= 起動 =================
 function boot(){
   fetchRoster().then(function(res){
-    if (res && res.ok) roster = res.members || [];
+    if (res && res.ok) { roster = res.members || []; announcements = res.announcements || {}; }
     var saved = loadState();
     state = saved || defaultState();
     if (!state.dateLabel) state.dateLabel = todayStr();
@@ -1817,6 +2135,26 @@ function boot(){
       '<button class="btn gray block" style="margin-top:8px" onclick="RB.bootNoRoster()">名簿なしで開く（手入力）</button></div>';
   });
 }
+RB.toggleMusic = function(){
+  state.musicOn = !state.musicOn;
+  if (!state.musicOn) musicStop();
+  else musicElem();   // このタップでiOSの再生制限を解除しておく
+  saveState(); render();
+};
+RB.musicPrepare = function(){ musicPrepare(); };
+RB.musicStop = function(){ musicStop(); };
+RB.musicTest = function(){
+  var n = state.firstOrder[0] || state.secondOrder[0];
+  var m = n ? rosterByName(n) : null;
+  var s = m && (m.firstAtBatSong || songForCount(m, 1));
+  if (!s) { showToast('1番打者の曲が登録されていません'); return; }
+  musicGet(s.id).then(function(b){
+    if (!b) { showToast('まだダウンロードされていません。「楽曲を準備」を押してください'); return; }
+    musicPlayBlob(b);
+    showToast('再生: ' + (s.name || n));
+  });
+};
+
 RB.bootNoRoster = function(){
   roster = [];
   var saved = loadState();
