@@ -1408,6 +1408,17 @@ function musicEmbedHtml(url) {
       tid + '?utm_source=generator&theme=0" width="100%" height="152" frameborder="0" ' +
       'allow="autoplay;clipboard-write;encrypted-media;fullscreen;picture-in-picture" loading="lazy"></iframe>';
   }
+  // YouTube Music は埋め込みができないので、リンクのボタンにする。
+  // （MVが公開されていない曲は、音源はあっても埋め込み再生できないことがある）
+  if (/music\.youtube\.com/.test(String(url))) {
+    const isSearch = /\/search/.test(String(url));
+    return '<a href="' + esc(url) + '" target="_blank" rel="noopener" ' +
+      'style="display:flex;align-items:center;gap:9px;background:#17181d;border:1px solid #26272e;' +
+      'border-radius:12px;padding:11px 13px;margin:4px 0 8px;text-decoration:none">' +
+      '<span style="color:#ff0033;font-size:1.05em;line-height:1">▶</span>' +
+      '<span style="color:#e9e9ec;font-size:.9em">YouTube Musicで' + (isSearch ? '探す' : '聴く') + '</span>' +
+      '<span style="margin-left:auto;color:#9fa3ad;font-size:.8em">↗</span></a>';
+  }
   var vid = youtubeVideoId(url);
   if (vid) {
     // 16:9を保つため、高さは幅から決める（端末幅に依らず崩れない）
@@ -1845,8 +1856,9 @@ function fillSpotifyLinks() { return fillSpotifyLinksCore(false); }
 //   2) プロジェクトの設定 → スクリプト プロパティ に YOUTUBE_API_KEY を追加
 //   3) fillYoutubeLinksDryRun を実行 → ログで結果を確認
 //   4) 問題なければ fillYoutubeLinks を実行 → 空欄のセルにURLを書き込む
-// 無料枠は1日10,000ユニットで、検索1回が100ユニット＝1日100曲まで。
-// 1回の実行では YT_MAX_SEARCH 曲までにして、足りない分は翌日以降に回す。
+// 無料枠は1日10,000ユニットで、検索1回が100ユニット＝1日100回まで。
+// 1回の実行では YT_MAX_SEARCH 回までにして、足りない分は翌日以降に回す。
+// （音楽カテゴリで見つからず探し直した曲は検索2回ぶん使う）
 const YT_MAX_SEARCH = 90;
 
 function youtubeKey() {
@@ -1861,52 +1873,125 @@ function setYoutubeKey() {
   return "YOUTUBE_API_KEY を保存しました（この関数の KEY は \"\" に戻してください）";
 }
 
-/** YouTubeで曲を探して {id, url, title, channel, score} を返す。見つからなければ null */
-function youtubeSearchVideo(artist, title) {
-  const key = youtubeKey();
-  if (!key) throw new Error("スクリプトプロパティに YOUTUBE_API_KEY を設定してください");
-  const q = ((artist ? artist + " " : "") + title).trim();
-  if (!q) return null;
+// 検索を何回呼んだか（無料枠の消費は検索1回=100ユニット。上限判定に使う）
+var _ytSearchCalls = 0;
 
+function ytSearch_(q, useMusicCategory, embeddableOnly) {
   const url = "https://www.googleapis.com/youtube/v3/search" +
-    "?part=snippet&type=video&maxResults=5" +
-    "&videoEmbeddable=true" +            // 埋め込みできない動画は最初から除く
-    "&videoCategoryId=10" +              // 音楽カテゴリ
+    "?part=snippet&type=video&maxResults=8" +
+    (embeddableOnly ? "&videoEmbeddable=true" : "") +    // 埋め込みできない動画を除くかどうか
+    (useMusicCategory ? "&videoCategoryId=10" : "") +    // 音楽カテゴリ
+    "&regionCode=JP&relevanceLanguage=ja" +
     "&q=" + encodeURIComponent(q) +
-    "&key=" + encodeURIComponent(key);
+    "&key=" + encodeURIComponent(youtubeKey());
+  _ytSearchCalls++;
   const res = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
   const code = res.getResponseCode();
   const body = JSON.parse(res.getContentText() || "{}");
   if (code !== 200) {
     const reason = (((body.error || {}).errors || [])[0] || {}).reason || "";
-    if (reason === "quotaExceeded") throw new Error("QUOTA");
+    if (reason === "quotaExceeded" || reason === "dailyLimitExceeded") throw new Error("QUOTA");
     throw new Error("YouTube検索に失敗 (HTTP " + code + "): " + res.getContentText().slice(0, 200));
   }
-  const items = body.items || [];
-  if (!items.length) return null;
+  return body.items || [];
+}
 
-  // 曲名・アーティスト名との近さで選ぶ。公式らしさも少しだけ加点する
+/** 候補が日本で普通に再生・埋め込みできるかを確認する（videos.list は1回1ユニットと安い）
+ *  返り値: { id: 理由文字列 or "" }  ""なら問題なし */
+function ytCheck_(ids) {
+  const out = {};
+  if (!ids.length) return out;
+  const url = "https://www.googleapis.com/youtube/v3/videos" +
+    "?part=status,contentDetails&id=" + encodeURIComponent(ids.join(",")) +
+    "&key=" + encodeURIComponent(youtubeKey());
+  const res = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+  if (res.getResponseCode() !== 200) return out;   // 確認できないときは素通しする
+  const body = JSON.parse(res.getContentText() || "{}");
+  (body.items || []).forEach(function (it) {
+    const st = it.status || {}, cd = it.contentDetails || {};
+    const rr = cd.regionRestriction || {};
+    let why = "";
+    if (st.embeddable === false) why = "埋め込み不可";
+    else if (st.privacyStatus && st.privacyStatus !== "public") why = "限定公開";
+    else if ((cd.contentRating || {}).ytRating === "ytAgeRestricted") why = "年齢制限（埋め込み再生不可）";
+    else if (rr.blocked && rr.blocked.indexOf("JP") >= 0) why = "日本で視聴不可";
+    else if (rr.allowed && rr.allowed.indexOf("JP") < 0) why = "日本で視聴不可";
+    out[it.id] = why;
+  });
+  // 応答に含まれない＝削除済みなど
+  ids.forEach(function (id) { if (!(id in out)) out[id] = "動画が存在しません"; });
+  return out;
+}
+
+// 候補を曲名・アーティスト名との近さで並べる。公式らしさも少しだけ加点する
+function ytRank_(items, artist, title, via) {
   const wantTitle = normForMatch(title);
   const wantArtist = normForMatch(artist || "");
-  let best = null;
-  items.forEach(function (it) {
+  return items.map(function (it) {
     const sn = it.snippet || {};
     const vt = normForMatch(sn.title || "");
     const ch = normForMatch(sn.channelTitle || "");
     let sc = similarity(wantTitle, vt);
-    if (vt.indexOf(wantTitle) >= 0) sc = Math.max(sc, 0.85); // 「曲名 / アーティスト【MV】」など
+    if (wantTitle && vt.indexOf(wantTitle) >= 0) sc = Math.max(sc, 0.85); // 「曲名 / アーティスト【MV】」など
     if (wantArtist && (vt.indexOf(wantArtist) >= 0 || ch.indexOf(wantArtist) >= 0)) sc += 0.12;
     if (/official|mv|music ?video|トピック|topic/i.test(sn.title + " " + sn.channelTitle)) sc += 0.05;
-    const cand = {
+    return {
       id: it.id.videoId,
       url: "https://www.youtube.com/watch?v=" + it.id.videoId,
-      title: sn.title || "",
-      channel: sn.channelTitle || "",
-      score: Math.round(Math.min(1, sc) * 100) / 100
+      title: sn.title || "", channel: sn.channelTitle || "",
+      score: Math.round(Math.min(1, sc) * 100) / 100, via: via || ""
     };
-    if (!best || cand.score > best.score) best = cand;
-  });
-  return best;
+  }).sort(function (a, b) { return b.score - a.score; });
+}
+
+/** YouTubeで曲を探す。必ず何らかのリンクを返す（最後の手段はYouTube Musicの検索リンク）
+ *   kind:"embed"  … サイトに動画を埋め込める
+ *   kind:"music"  … 音源はあるが埋め込めない（MV未公開・年齢制限・地域制限など）→ YouTube Musicのリンク
+ *   kind:"search" … 候補が見つからない → YouTube Musicの検索リンク
+ *  探し方:
+ *   1) 音楽カテゴリ＋埋め込み可
+ *   2) 1で0件ならカテゴリ指定を外す（アニメ・ゲーム・特撮の曲は音楽カテゴリに入っていない）
+ *   3) それでも0件なら埋め込み可の条件も外す（＝MVが無く音源だけの曲を拾う）
+ */
+function youtubeSearchVideo(artist, title) {
+  if (!youtubeKey()) throw new Error("スクリプトプロパティに YOUTUBE_API_KEY を設定してください");
+  const q = ((artist ? artist + " " : "") + title).trim();
+  if (!q) return null;
+  const musicSearchUrl = "https://music.youtube.com/search?q=" + encodeURIComponent(q);
+
+  let cands = ytRank_(ytSearch_(q, true, true), artist, title, "");
+  if (!cands.length) cands = ytRank_(ytSearch_(q, false, true), artist, title, "音楽カテゴリ外");
+
+  if (cands.length) {
+    // 上位から、日本で普通に再生できるものを選ぶ
+    const checks = ytCheck_(cands.slice(0, 5).map(function (c) { return c.id; }));
+    for (let i = 0; i < cands.length; i++) {
+      const why = checks[cands[i].id];
+      if (why === undefined || why === "") {
+        const c = cands[i];
+        c.kind = "embed";
+        if (i > 0) c.via = (c.via ? c.via + " / " : "") + "上位は再生不可のため次点";
+        return c;
+      }
+      cands[i].skipReason = why;
+    }
+    // 全部だめ＝埋め込めないので、YouTube Musicのリンクにする
+    const top = cands[0];
+    return { kind: "music", url: "https://music.youtube.com/watch?v=" + top.id,
+             title: top.title, channel: top.channel, score: top.score,
+             via: top.skipReason + "のため YouTube Music" };
+  }
+
+  // 埋め込み可の条件を外して探し直す（MVが無く、音源だけがある曲）
+  const any = ytRank_(ytSearch_(q, false, false), artist, title, "");
+  if (any.length) {
+    const top = any[0];
+    return { kind: "music", url: "https://music.youtube.com/watch?v=" + top.id,
+             title: top.title, channel: top.channel, score: top.score,
+             via: "MV未公開のため YouTube Music" };
+  }
+  return { kind: "search", url: musicSearchUrl, title: q, channel: "", score: 0,
+           via: "候補なし・YouTube Musicの検索リンク" };
 }
 
 function fillYoutubeLinksCore(dryRun, replaceSpotify) {
@@ -1921,10 +2006,11 @@ function fillYoutubeLinksCore(dryRun, replaceSpotify) {
   const v = sh.getRange(1, 1, lastRow, width).getValues();
   const pairs = spotifyColPairs(); // 列の対応はSpotifyのときと同じ
 
-  const log = [];
-  let filled = 0, skipped = 0, notFound = 0, searched = 0;
+  const log = [], manual = [];
+  let filled = 0, skipped = 0, notFound = 0, embedded = 0, musicLink = 0;
   let quota = false, capped = false;
   const writes = [];
+  _ytSearchCalls = 0;
 
   for (let r = 1; r < v.length && !quota && !capped; r++) {
     const name = stripSpace(v[r][0]);
@@ -1936,28 +2022,34 @@ function fillYoutubeLinksCore(dryRun, replaceSpotify) {
       const cur = String(v[r][p.url] || "").trim();
       if (cur && youtubeVideoId(cur)) { skipped++; continue; }    // 既にYouTubeが入っている
       if (cur && !replaceSpotify) { skipped++; continue; }        // Spotifyが入っている（置換モードでなければ触らない）
-      if (searched >= YT_MAX_SEARCH) { capped = true; break; }
+      if (_ytSearchCalls >= YT_MAX_SEARCH) { capped = true; break; }
 
       const sp = splitSongTitle(raw);
+      const where = name + " " + p.label + " : " + raw;
       let hit = null;
       try {
-        searched++;
         hit = youtubeSearchVideo(sp.artist, sp.title);
       } catch (e) {
         if (String(e).indexOf("QUOTA") >= 0) { quota = true; break; }
         hit = null;
       }
       Utilities.sleep(120);
+
       if (!hit) {
         notFound++;
-        log.push("× 見つからず  " + name + " " + p.label + " : " + raw);
+        log.push("× 見つからず  " + where);
+        manual.push(where + "  … 候補なし");
         continue;
       }
+      // kind: embed=動画を埋め込める / music=YouTube Musicのリンク / search=検索リンク
+      const mark = hit.kind === "embed" ? (hit.score < 0.6 ? "△ 要確認" : "○")
+                 : hit.kind === "music" ? "♪ YouTube Music" : "？ 検索リンク";
+      if (hit.kind === "embed") embedded++; else musicLink++;
+      if (hit.kind === "search") manual.push(where + "  … 候補なし（検索リンクを入れました）");
       filled++;
-      const mark = hit.score < 0.6 ? "△ 要確認" : "○";
-      log.push(mark + " " + name + " " + p.label + " : " + raw + "  →  " +
-        hit.title + "（" + hit.channel + " / 一致度 " + hit.score + "）" +
-        (cur ? "  ※Spotifyから置換" : ""));
+      log.push(mark + " " + where + "  →  " + hit.title +
+        (hit.channel ? "（" + hit.channel + " / 一致度 " + hit.score + "）" : "") +
+        (hit.via ? "  ※" + hit.via : "") + (cur ? "  ※Spotifyから置換" : ""));
       writes.push({ row: r + 1, col: p.url + 1, url: hit.url });
     }
   }
@@ -1968,10 +2060,15 @@ function fillYoutubeLinksCore(dryRun, replaceSpotify) {
   }
 
   const head = (dryRun ? "【確認のみ・書き込んでいません】" : "【書き込みました】") +
-    " 対象 " + filled + " 件 / 見つからず " + notFound + " 件 / 既にあり " + skipped + " 件（検索 " + searched + " 回）";
-  const tail = quota ? "\n\n※ 本日の無料枠（1日100曲ぶん）を使い切りました。明日また実行してください。"
-    : capped ? "\n\n※ 1回あたりの上限（" + YT_MAX_SEARCH + "曲）に達しました。もう一度実行すると続きから進みます。" : "";
-  const msg = head + tail + "\n\n" + log.join("\n");
+    " 入った " + filled + " 件（動画を埋め込める " + embedded + " 件 / YouTube Musicのリンク " + musicLink + " 件）" +
+    " / 入らなかった " + notFound + " 件 / 既にあり " + skipped + " 件" +
+    "（検索 " + _ytSearchCalls + " 回＝" + (_ytSearchCalls * 100) + "ユニット消費）";
+  const tail = quota ? "\n\n※ 本日の無料枠を使い切りました。明日また実行すると続きから進みます。"
+    : capped ? "\n\n※ 1回あたりの上限に達しました。もう一度実行すると続きから進みます。" : "";
+  const hand = manual.length
+    ? "\n\n―― 見直したほうがよいもの（" + manual.length + "件）――\n" + manual.join("\n")
+    : "";
+  const msg = head + tail + hand + "\n\n―― 全件 ――\n" + log.join("\n");
   Logger.log(msg);
   return msg;
 }
