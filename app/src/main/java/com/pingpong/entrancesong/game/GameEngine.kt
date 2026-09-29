@@ -532,12 +532,16 @@ object GameEngine {
         //  - 1回表→1回裏: 投手イントロフローに委譲するためここでは何も流さない
         // 塁状況が未確定でも、一番起こりやすい結果を先読みしてすぐ鳴らし始める。
         // 外れていたらポップアップの確定時に playDeferredSong が鳴らし直す。
+        //  - 安打だけは例外。単打か本塁打かで塁状況が真逆になり（本塁打なら走者なし）、
+        //    先読みが外れやすいので、塁打数が選ばれるまで待つ。
         val isFirstToSecond = autoChange && isFirstToSecondChange()
         val suppressed = state.suppressNextResultSong
         state.suppressNextResultSong = false
         val nextMember = memberById(nextId)
+        val hasChanceSong = nextMember?.chanceSong != null || nextMember?.losingChanceSong != null
+        val deferSong = !autoChange && hasChanceSong && type == Scorebook.RESULT_HIT
         state.pendingSongUri = null
-        if (playSong && !suppressed && !isFirstToSecond) {
+        if (playSong && !suppressed && !isFirstToSecond && !deferSong) {
             nextMember?.let { nm ->
                 val count = countOf(nm) + 1
                 if (autoChange) {
