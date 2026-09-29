@@ -2606,15 +2606,39 @@ function publishGame(sheetName) {
   return publishSite([name]);
 }
 
-/** 設定の確認 */
+/** 設定の確認。トークンで実際にGitHubへ接続して、書き込めるかまで見る */
 function publishStatus() {
-  const msg = [
-    "GITHUB_TOKEN: " + (ghToken() ? "設定済み" : "未設定"),
-    "リポジトリ: " + GH_REPO + " / ブランチ: " + GH_BRANCH,
-    "書き出し先: " + GH_DIR + "/",
-    "公開URL: " + (siteUrl() || "(未取得)"),
-    "試合シート数: " + gameSheetNames().length
-  ].join("\n");
+  const lines = [];
+  lines.push("リポジトリ: " + GH_REPO + " / ブランチ: " + GH_BRANCH);
+  lines.push("書き出し先: " + GH_DIR + "/");
+  lines.push("試合シート数: " + gameSheetNames().length);
+
+  const u = siteUrl();
+  lines.push("公開URL: " + (u && u.indexOf("/exec") >= 0 ? u : "✗ 未取得（一度サイトを開いてください）"));
+
+  if (!ghToken()) {
+    lines.push("GITHUB_TOKEN: ✗ 未設定");
+    lines.push("　→ プロジェクトの設定 → スクリプト プロパティ に GITHUB_TOKEN を追加してください");
+  } else {
+    try {
+      const repo = gh_("GET", "");                        // リポジトリ情報＝読めるか
+      const perm = (repo.permissions || {});
+      lines.push("GITHUB_TOKEN: ✓ 接続できました（" + repo.full_name + "）");
+      lines.push("書き込み権限: " + (perm.push ? "✓ あり" : "✗ なし → トークンの Contents を Read and write にしてください"));
+      gh_("GET", "/git/ref/heads/" + GH_BRANCH);          // ブランチが存在するか
+      lines.push("ブランチ " + GH_BRANCH + ": ✓ 確認できました");
+      lines.push(perm.push ? "\n準備OKです。publishSite を実行してください。"
+                           : "\n権限が足りません。トークンを作り直してください。");
+    } catch (e) {
+      const s = String(e);
+      lines.push("GITHUB_TOKEN: ✗ 接続できません");
+      lines.push("　" + s.slice(0, 200));
+      if (s.indexOf("401") >= 0) lines.push("　→ トークンが違うか期限切れです。作り直して登録し直してください。");
+      else if (s.indexOf("403") >= 0) lines.push("　→ 権限不足です。Contents: Read and write を付けてください。");
+      else if (s.indexOf("404") >= 0) lines.push("　→ そのリポジトリにアクセスできません。トークンの対象リポジトリを確認してください。");
+    }
+  }
+  const msg = lines.join("\n");
   Logger.log(msg);
   return msg;
 }
