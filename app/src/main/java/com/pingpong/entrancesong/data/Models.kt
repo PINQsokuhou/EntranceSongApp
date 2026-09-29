@@ -195,6 +195,12 @@ data class GameState(
     var awaitingStrikeoutChoice: Boolean = false,
     /** 「前の打者」で戻した直後の1回だけ、次の結果確定で曲を鳴らさない（#2 二度流し防止） */
     var suppressNextResultSong: Boolean = false,
+    /**
+     * 結果ボタンを押した時点で「塁状況の先読み」で鳴らし始めた曲のURI。
+     * ポップアップで塁が確定したとき、これと同じ曲ならそのまま鳴らし続け、
+     * 違っていれば鳴らし直す（playDeferredSong）。
+     */
+    var pendingSongUri: String? = null,
     /** 詳細入力ポップアップ待ちの打席（null = 通常進行中） */
     var pending: PendingResult? = null,
     /**

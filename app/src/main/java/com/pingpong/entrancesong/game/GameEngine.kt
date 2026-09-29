@@ -203,6 +203,44 @@ object GameEngine {
         return nm.chanceSong != null || nm.losingChanceSong != null
     }
 
+    /**
+     * 結果ボタンを押した時点で塁状況を先読みする（曲をすぐ鳴らし始めるため）。
+     * 一番起こりやすい結果を仮定し、外れていたら playDeferredSong で鳴らし直す。
+     * 戻り値は (先読みした塁状況, 生還数)。
+     */
+    private fun predictedBases(type: String): Pair<List<Boolean>, Int> {
+        val b = state.bases.toList()
+        return when (type) {
+            // アウトは走者が動かないことが多い。
+            // タッチアップや三塁走者の生還はポップアップで確定してから鳴らし直す。
+            Scorebook.RESULT_OUT -> b to 0
+            // 犠牲・スクイズは三塁走者が生還する前提
+            Scorebook.RESULT_SAC, Scorebook.RESULT_SQUEEZE -> {
+                val next = b.toMutableList()
+                var runs = 0
+                if (next[2]) { next[2] = false; runs++ }
+                next.toList() to runs
+            }
+            // 安打・失策・nHnE は単打（全走者1つ進塁）を仮定
+            Scorebook.RESULT_HIT, Scorebook.RESULT_ERROR, Scorebook.RESULT_NHNE -> {
+                val next = mutableListOf(false, false, false)
+                var runs = 0
+                for (i in 2 downTo 0) {
+                    if (!b[i]) continue
+                    if (i + 1 >= 3) runs++ else next[i + 1] = true
+                }
+                next[0] = true // 打者走者は一塁へ
+                next.toList() to runs
+            }
+            // 四球・死球・打撃妨害は押し出しのみ
+            else -> Scorebook.forcedAdvance(b) to Scorebook.forcedAdvanceRuns(b)
+        }
+    }
+
+    /**
+     * ポップアップで塁状況が確定したときの鳴らし直し。
+     * 先読みで鳴らした曲と同じなら何もしない（鳴らし直すと頭から戻ってしまうため）。
+     */
     fun playDeferredSong(futureBases: List<Boolean>, runs: Int) {
         val p = state.pending ?: return
         if (p.autoChange) return
@@ -210,8 +248,12 @@ object GameEngine {
         val nm = memberById(nextId) ?: return
         val count = countOf(nm) + 1
         val song = selectSongWithBases(nm, count, futureBases, runs)
+        val started = state.pendingSongUri
+        if (song?.uri == started) return                       // 先読みが当たっていた
+        if (started != null && player?.isPlaying != true) return // 外れたが既に鳴り終わっている
         if (song == null) {
                     } else {
+            state.pendingSongUri = song.uri
             player?.play(song.uri)
         }
         markUndoSongPlayed()
@@ -488,17 +530,14 @@ object GameEngine {
         //  - 三振で既に鳴らし済み（playSong=false）
         //  - 「前の球」で前打者に戻った直後の再入力（suppressNextResultSong）: 二度流し防止（#2）
         //  - 1回表→1回裏: 投手イントロフローに委譲するためここでは何も流さない
-        //  - 塁状況が未確定かつ次打者にチャンス曲が設定されている: ポップアップで塁が確定してから再生
+        // 塁状況が未確定でも、一番起こりやすい結果を先読みしてすぐ鳴らし始める。
+        // 外れていたらポップアップの確定時に playDeferredSong が鳴らし直す。
         val isFirstToSecond = autoChange && isFirstToSecondChange()
         val suppressed = state.suppressNextResultSong
         state.suppressNextResultSong = false
         val nextMember = memberById(nextId)
-        val hasChanceSong = nextMember?.chanceSong != null || nextMember?.losingChanceSong != null
-        val deferSong = !autoChange && hasChanceSong && (type == Scorebook.RESULT_HIT ||
-                type == Scorebook.RESULT_ERROR || type == Scorebook.RESULT_OUT ||
-                type == Scorebook.RESULT_SAC || type == Scorebook.RESULT_NHNE ||
-                type == Scorebook.RESULT_SQUEEZE)
-        if (playSong && !suppressed && !isFirstToSecond && !deferSong) {
+        state.pendingSongUri = null
+        if (playSong && !suppressed && !isFirstToSecond) {
             nextMember?.let { nm ->
                 val count = countOf(nm) + 1
                 if (autoChange) {
@@ -512,12 +551,11 @@ object GameEngine {
                         }
                     }
                 } else {
-                    val walkBases = Scorebook.forcedAdvance(state.bases)
-                    val walkRuns = if (walkBases == state.bases) 0 else
-                        Scorebook.forcedAdvanceRuns(state.bases)
-                    val song = selectSongWithBases(nm, count, walkBases, walkRuns)
+                    val (futureBases, futureRuns) = predictedBases(type)
+                    val song = selectSongWithBases(nm, count, futureBases, futureRuns)
                     if (song == null) {
                                             } else {
+                        state.pendingSongUri = song.uri
                         player?.play(song.uri)
                     }
                 }
