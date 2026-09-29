@@ -205,14 +205,24 @@ object GameEngine {
 
     /**
      * 結果ボタンを押した時点で塁状況を先読みする（曲をすぐ鳴らし始めるため）。
-     * 一番起こりやすい結果を仮定し、外れていたら playDeferredSong で鳴らし直す。
+     * 一番起こりやすい結果を仮定する。外れても、鳴り始めた曲は切り替えない。
      * 戻り値は (先読みした塁状況, 生還数)。
      */
     private fun predictedBases(type: String): Pair<List<Boolean>, Int> {
         val b = state.bases.toList()
+        // 全走者と打者走者を n 塁ぶん進める
+        fun advance(n: Int): Pair<List<Boolean>, Int> {
+            val next = mutableListOf(false, false, false)
+            var runs = 0
+            for (i in 2 downTo 0) {
+                if (!b[i]) continue
+                if (i + n >= 3) runs++ else next[i + n] = true
+            }
+            if (n in 1..3) next[n - 1] = true // 打者走者
+            return next.toList() to runs
+        }
         return when (type) {
-            // アウトは走者が動かないことが多い。
-            // タッチアップや三塁走者の生還はポップアップで確定してから鳴らし直す。
+            // アウトは走者が動かないことが多い（タッチアップは例外として割り切る）
             Scorebook.RESULT_OUT -> b to 0
             // 犠牲・スクイズは三塁走者が生還する前提
             Scorebook.RESULT_SAC, Scorebook.RESULT_SQUEEZE -> {
@@ -221,36 +231,29 @@ object GameEngine {
                 if (next[2]) { next[2] = false; runs++ }
                 next.toList() to runs
             }
-            // 安打・失策・nHnE は単打（全走者1つ進塁）を仮定
-            Scorebook.RESULT_HIT, Scorebook.RESULT_ERROR, Scorebook.RESULT_NHNE -> {
-                val next = mutableListOf(false, false, false)
-                var runs = 0
-                for (i in 2 downTo 0) {
-                    if (!b[i]) continue
-                    if (i + 1 >= 3) runs++ else next[i + 1] = true
-                }
-                next[0] = true // 打者走者は一塁へ
-                next.toList() to runs
-            }
+            // nHnE は2進塁を仮定
+            Scorebook.RESULT_NHNE -> advance(2)
+            // 安打・失策は単打（1つ進塁）を仮定
+            Scorebook.RESULT_HIT, Scorebook.RESULT_ERROR -> advance(1)
             // 四球・死球・打撃妨害は押し出しのみ
             else -> Scorebook.forcedAdvance(b) to Scorebook.forcedAdvanceRuns(b)
         }
     }
 
     /**
-     * ポップアップで塁状況が確定したときの鳴らし直し。
-     * 先読みで鳴らした曲と同じなら何もしない（鳴らし直すと頭から戻ってしまうため）。
+     * ポップアップで塁状況が確定したときの再生。
+     * 安打のように先読みせず待っていた場合だけここで鳴らす。
+     * 一度鳴り始めた曲は、あとから塁状況が変わっても切り替えない
+     * （途中で別の曲に変わるほうが不自然なため）。
      */
     fun playDeferredSong(futureBases: List<Boolean>, runs: Int) {
         val p = state.pending ?: return
         if (p.autoChange) return
+        if (state.pendingSongUri != null) return // 既にこの打席の曲を鳴らし始めている
         val nextId = p.nextBatterId ?: return
         val nm = memberById(nextId) ?: return
         val count = countOf(nm) + 1
         val song = selectSongWithBases(nm, count, futureBases, runs)
-        val started = state.pendingSongUri
-        if (song?.uri == started) return                       // 先読みが当たっていた
-        if (started != null && player?.isPlaying != true) return // 外れたが既に鳴り終わっている
         if (song == null) {
                     } else {
             state.pendingSongUri = song.uri
@@ -531,7 +534,7 @@ object GameEngine {
         //  - 「前の球」で前打者に戻った直後の再入力（suppressNextResultSong）: 二度流し防止（#2）
         //  - 1回表→1回裏: 投手イントロフローに委譲するためここでは何も流さない
         // 塁状況が未確定でも、一番起こりやすい結果を先読みしてすぐ鳴らし始める。
-        // 外れていたらポップアップの確定時に playDeferredSong が鳴らし直す。
+        // 先読みが外れても、鳴り始めた曲は途中で切り替えない（そのほうが自然なため）。
         //  - 安打だけは例外。単打か本塁打かで塁状況が真逆になり（本塁打なら走者なし）、
         //    先読みが外れやすいので、塁打数が選ばれるまで待つ。
         val isFirstToSecond = autoChange && isFirstToSecondChange()
