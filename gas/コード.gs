@@ -22,7 +22,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v67";
+const SITE_VER = "site v68";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -2817,50 +2817,148 @@ function ghCommit_(files, message) {
   return newCommit.sha.slice(0, 7);
 }
 
-// シート名 → 書き出し先のファイル名（想定外の文字が入っていたら書き出さない）
-function staticGamePath_(name) {
-  return /^[A-Za-z0-9_-]+$/.test(name) ? ("g/" + name + ".html") : null;
+// ---- ページのURL（クエリ文字列）→ 書き出し先のファイル名 ----
+// ブラウザ側（site/index.html）と同じ規則で、クエリを並べ替えてから短い名前にする。
+// こうしておけば、ラッパーは「その名前のファイルがあるか」を見るだけで済み、
+// どのページを書き出したかを知らなくてよい（無ければGASへ回す）。
+// 符号化の違い（フォーム送信は空白を + に、encodeURIComponent は %20 にする等）を
+// 吸収するため、いったん復号してから同じ方式で符号化し直す。
+function canonQuery_(qs) {
+  function dec(x) {
+    try { return decodeURIComponent(String(x).replace(/\+/g, "%20")); } catch (e) { return String(x); }
+  }
+  const parts = String(qs || "").replace(/^\?/, "").split("&")
+    .filter(function (p) { return p && p.indexOf("raw=") !== 0; })
+    .map(function (p) {
+      const i = p.indexOf("=");
+      const k = i < 0 ? p : p.slice(0, i);
+      const v = i < 0 ? "" : p.slice(i + 1);
+      return encodeURIComponent(dec(k)) + "=" + encodeURIComponent(dec(v));
+    });
+  parts.sort();
+  return parts.join("&");
+}
+function queryKey_(qs) {
+  const s = canonQuery_(qs);
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = (((h * 33) ^ s.charCodeAt(i)) >>> 0);
+  return s.length.toString(36) + "_" + h.toString(36);
 }
 
-/** 試合一覧＋指定した試合の詳細を書き出す。names を省略すると全試合。 */
-function publishSite(names) {
-  if (!ghToken()) return "GITHUB_TOKEN が未設定です。setGithubToken を使って登録してください。";
-  // 公開URL（/exec）が分かっていないと、リンクに開発URLが焼き付いて開けなくなる
+/** 今シーズン通算での成績ランキングの種目一覧（renderStats と同じ選び方） */
+function statDefsForDefault_(isBat) {
+  const src = seisekiRankSource(seisekiSheetFor(ALL_GAMES));
+  const d = sheetRankDefs(src, isBat);
+  return d.length ? d : (isBat ? BAT_RANK : PIT_RANK);
+}
+
+/** 静的に書き出すページの一覧。q はクエリ文字列（先頭の ? なし） */
+function publishTargets_() {
+  const t = [];
+  t.push({ q: "", label: "試合一覧", make: function () { return renderIndex(); } });
+  gameSheetNames().forEach(function (n) {
+    t.push({ q: "view=game&sheet=" + encodeURIComponent(n), label: "試合 " + n,
+             make: function () { return renderGame(n); } });
+  });
+  t.push({ q: "view=music", label: "登場曲", make: function () { return renderMusic(); } });
+
+  // 成績（今シーズン通算）。リンクから来る素の ?view=stats と、種目を選んだ後の形の両方
+  t.push({ q: "view=stats", label: "成績（既定）", make: function () { return renderStats("bat", "", ""); } });
+  ["bat", "pit"].forEach(function (ty) {
+    statDefsForDefault_(ty === "bat").forEach(function (d) {
+      t.push({
+        q: "view=stats&type=" + ty + "&period=&stat=" + encodeURIComponent(d.id),
+        label: "成績 " + ty + " " + d.label,
+        make: function () { return renderStats(ty, d.id, ""); }
+      });
+    });
+  });
+
+  // 選手ページ（今シーズン通算）。成績シートに行がある選手ぶん
+  playerNamesForPublish_().forEach(function (nm) {
+    t.push({ q: "view=player&name=" + encodeURIComponent(nm), label: "選手 " + nm,
+             make: function () { return renderPlayer(nm, ""); } });
+    t.push({ q: "view=player&name=" + encodeURIComponent(nm) + "&period=", label: "選手 " + nm + "（期間指定）",
+             make: function () { return renderPlayer(nm, ""); } });
+  });
+  return t;
+}
+
+/** 成績シートに行がある選手名（＝選手ページがある人） */
+function playerNamesForPublish_() {
+  const src = seisekiRankSource(seisekiSheetFor(ALL_GAMES));
+  if (!src) return [];
+  const out = [], seen = {};
+  for (let r = 1; r < src.values.length; r++) {
+    const nm = normName(src.values[r][0]);
+    if (!nm || seen[nm]) continue;
+    // 「平均」「合計」など集計行は選手ページを持たない
+    if (/^(平均|合計|計|total)$/i.test(nm)) continue;
+    seen[nm] = 1; out.push(nm);
+  }
+  return out;
+}
+
+const PUB_PROGRESS_KEY = "pubIdx";
+
+/**
+ * サイト全体を静的に書き出す。
+ * 6分の実行上限に収まらない場合は途中で止め、次に実行したとき続きから進む。
+ * onlyGames に試合シート名の配列を渡すと、その試合と試合一覧だけを書き出す。
+ */
+function publishSite(onlyGames) {
+  if (!ghToken()) return "GITHUB_TOKEN が未設定です。プロジェクトの設定 → スクリプト プロパティ に登録してください。";
   const u = siteUrl();
   if (!u || u.indexOf("/exec") < 0) {
     return "公開URLが未取得のため中止しました。一度サイトを開いてから再実行してください。";
   }
+  const props = PropertiesService.getScriptProperties();
   const started = Date.now();
-  const targets = names && names.length ? names : gameSheetNames();
-  const files = [];
-  const skipped = [];
 
+  let targets, partial = false, from = 0;
+  if (onlyGames && onlyGames.length) {
+    targets = [{ q: "", label: "試合一覧", make: function () { return renderIndex(); } }];
+    onlyGames.forEach(function (n) {
+      targets.push({ q: "view=game&sheet=" + encodeURIComponent(n), label: "試合 " + n,
+                     make: function () { return renderGame(n); } });
+    });
+  } else {
+    targets = publishTargets_();
+    from = parseInt(props.getProperty(PUB_PROGRESS_KEY) || "0", 10) || 0;
+    if (from >= targets.length) from = 0; // 一周したので最初から
+  }
+
+  const files = [], failed = [];
+  let i = from;
   _noGenerateReview = true; // まとめ書き出し中はGeminiを呼ばない
   try {
-    files.push({ path: "index.html", content: rawHtml(renderIndex()) });
-    for (let i = 0; i < targets.length; i++) {
-      // GASは6分で打ち切られる。間に合わない分は次回に回す
-      if (Date.now() - started > 4 * 60 * 1000) {
-        skipped.push.apply(skipped, targets.slice(i));
-        break;
-      }
-      const n = targets[i];
-      const p = staticGamePath_(n);
-      if (!p) { skipped.push(n); continue; }
+    for (; i < targets.length; i++) {
+      if (Date.now() - started > 3.5 * 60 * 1000) { partial = true; break; }
+      const tg = targets[i];
       try {
-        files.push({ path: p, content: rawHtml(renderGame(n)) });
+        files.push({ path: "p/" + queryKey_(tg.q) + ".html", content: rawHtml(tg.make()) });
       } catch (e) {
-        skipped.push(n + "(" + e + ")");
+        failed.push(tg.label + "（" + e + "）");
       }
     }
   } finally {
     _noGenerateReview = false;
   }
 
-  const sha = ghCommit_(files, "サイト静的書き出し: " + files.length + " ファイル (" + SITE_VER + ")");
-  const msg = "書き出しました: " + files.length + " ファイル / コミット " + sha +
-    "（" + Math.round((Date.now() - started) / 1000) + "秒）" +
-    (skipped.length ? "\n未処理（もう一度実行してください）: " + skipped.join(", ") : "") +
+  let sha = "-";
+  if (files.length) {
+    sha = ghCommit_(files, "サイト静的書き出し: " + files.length + " ページ (" + SITE_VER + ")");
+  }
+  if (!onlyGames || !onlyGames.length) {
+    props.setProperty(PUB_PROGRESS_KEY, partial ? String(i) : "0");
+  }
+
+  const secs = Math.round((Date.now() - started) / 1000);
+  const msg = "書き出しました: " + files.length + " ページ / コミット " + sha + "（" + secs + "秒）" +
+    (partial ? "\n\n※ 途中で時間切れになりました（" + i + " / " + targets.length +
+               " ページ）。もう一度 publishSite を実行すると続きから進みます。"
+             : "\n\n全ページの書き出しが終わりました（" + targets.length + " ページ）。") +
+    (failed.length ? "\n\n作れなかったページ:\n  " + failed.join("\n  ") : "") +
     "\n※ GitHub Pages に反映されるまで20〜60秒ほどかかります。";
   Logger.log(msg);
   return msg;
@@ -2877,6 +2975,12 @@ function publishGame(sheetName) {
     return publishSite(ns.filter(function (n) { return n.indexOf(latest) === 0; }));
   }
   return publishSite([name]);
+}
+
+/** 書き出しの進み具合をリセットして、次回は最初から書き出す */
+function publishReset() {
+  PropertiesService.getScriptProperties().deleteProperty(PUB_PROGRESS_KEY);
+  return "次回の publishSite は最初から書き出します";
 }
 
 /** 設定の確認。トークンで実際にGitHubへ接続して、書き込めるかまで見る */

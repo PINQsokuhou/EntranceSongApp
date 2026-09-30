@@ -34,14 +34,35 @@ function urlFor(search) {
 }
 function cacheKey(search) { return CACHE_PREFIX + (search || ""); }
 
-// 試合一覧と各試合の詳細は、試合を保存したときにGASが data/ 配下へ書き出している。
-// そこにあればCDNから読む（数十ミリ秒）。無ければ今までどおりGASから取る（1〜6秒）。
-// 速報(LIVE)は常に最新が要るので静的ファイルは使わない。
+// GASが書き出しておいた完成HTMLが data/p/ にあればCDNから読む（数十ミリ秒）。
+// 無ければ今までどおりGASから取る（1〜6秒）。どのページを書き出したかは
+// ラッパー側では持たず、ファイルが無ければ404で自然にGASへ回る。
+// クエリの並び順が違っても同じページとみなせるよう、並べ替えてから名前にする
+// （GAS側の canonQuery_ / queryKey_ と同じ規則）。
 function staticFor(search) {
-  if (!search || search === "?") return "data/index.html";
-  var m = /^\?view=game&sheet=([A-Za-z0-9_-]+)$/.exec(search);
-  if (m && m[1].indexOf("LIVE") !== 0) return "data/g/" + m[1] + ".html";
-  return null;
+  if (!search) return "data/p/" + queryKey("");
+  if (search.indexOf(LIVE_PARAM) !== -1) return null;   // 速報は常に最新を取る
+  return "data/p/" + queryKey(search);
+}
+function queryKey(search) {
+  // 符号化の違い（フォーム送信は空白を + に、GAS側は %20 にする等）を吸収するため、
+  // いったん復号してから同じ方式で符号化し直す
+  function dec(x) {
+    try { return decodeURIComponent(String(x).replace(/\+/g, "%20")); } catch (e) { return String(x); }
+  }
+  var parts = String(search || "").replace(/^\?/, "").split("&")
+    .filter(function (p) { return p && p.indexOf("raw=") !== 0; })
+    .map(function (p) {
+      var i = p.indexOf("=");
+      var k = i < 0 ? p : p.slice(0, i);
+      var v = i < 0 ? "" : p.slice(i + 1);
+      return encodeURIComponent(dec(k)) + "=" + encodeURIComponent(dec(v));
+    });
+  parts.sort();
+  var s = parts.join("&");
+  var h = 5381;
+  for (var i2 = 0; i2 < s.length; i2++) h = (((h * 33) ^ s.charCodeAt(i2)) >>> 0);
+  return s.length.toString(36) + "_" + h.toString(36) + ".html";
 }
 
 // 取得元を順に試す。最初に成功したHTMLを返す
