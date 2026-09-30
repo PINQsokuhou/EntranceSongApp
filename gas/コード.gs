@@ -21,8 +21,15 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 // A1に経過シート名を入れると全数式が追従する作りのシートを指定する。
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
+// ★新シーズンを始めるとき★
+// 今シーズンのスプレッドシートを「ファイル → コピーを作成」でコピーし、
+// そのコピーのURLをここに貼ってから prepareNewSeasonDryRun → prepareNewSeason を実行する。
+// （コピーの中身を空にする。詳しい手順は prepareNewSeason_ のコメントを参照）
+// 済んだら "" に戻しておくこと。
+const NEW_SEASON_URL = "";
+
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v70";
+const SITE_VER = "site v71";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -537,7 +544,6 @@ function setupAliasSheet() {
     "・退団した人はD列に TRUE を入れると、フォームの名前候補から外れます。";
 }
 
-// 一度だけ実行: ロースターのスプレッドシートに「シーズン」シートを作り、現行シーズンを1行入れる
 // ---------------- 新シーズンの用意 ----------------
 // 今シーズンのスプレッドシートをコピーしたあと、この関数で中身を空にする。
 // 消すもの: 日付シート（1試合1枚）/ 月別の経過 / 月間成績 / LIVE / 戦評・タイムスタンプの中身
@@ -545,18 +551,17 @@ function setupAliasSheet() {
 //
 // 使い方:
 //   1) 今シーズンのスプシを「ファイル → コピーを作成」でコピー
-//   2) 下の NEW_SEASON_URL にコピーのURLを貼る
+//   2) ファイル先頭の NEW_SEASON_URL にコピーのURLを貼る
 //   3) prepareNewSeasonDryRun を実行 → 何を消すかログで確認
 //   4) 問題なければ prepareNewSeason を実行
 //   5) 「シーズン」シートに行を足して、新シーズンの C列 を TRUE にする
-const NEW_SEASON_URL = "";
 
 function prepareNewSeasonDryRun() { return prepareNewSeason_(true); }
 function prepareNewSeason() { return prepareNewSeason_(false); }
 
 function prepareNewSeason_(dryRun) {
   const id = fileId(NEW_SEASON_URL);
-  if (!id) return "この関数の上にある NEW_SEASON_URL に、コピーしたスプレッドシートのURLを貼ってから実行してください";
+  if (!id) return "ファイル先頭（29行目あたり）の NEW_SEASON_URL に、コピーしたスプレッドシートのURLを貼って保存してから実行してください";
   const cur = currentSeasonId();
   if (id === cur) {
     return "中止しました: 指定されたのは今の現行シーズンのスプレッドシートです。\n" +
@@ -631,6 +636,7 @@ function prepareNewSeason_(dryRun) {
   return msg;
 }
 
+// 一度だけ実行: ロースターのスプレッドシートに「シーズン」シートを作り、現行シーズンを1行入れる
 function setupSeasonSheet() {
   const book = rosterBook();
   let sh = book.getSheetByName(SEASON_SHEET);
