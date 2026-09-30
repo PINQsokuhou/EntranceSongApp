@@ -22,7 +22,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v68";
+const SITE_VER = "site v69";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -2096,28 +2096,31 @@ function fillYoutubeLinks() { return fillYoutubeLinksCore(false, false); }
 function fillYoutubeLinksReplaceDryRun() { return fillYoutubeLinksCore(true, true); }
 function fillYoutubeLinksReplace() { return fillYoutubeLinksCore(false, true); }
 
-// ---------------- 曲名を書き換えたら Spotify リンクを自動更新 ----------------
-// 一度だけ installSpotifyAutoUpdate() を実行するとトリガーが登録され、
-// 以後は楽曲登録シートの曲名セルを編集するたびに、対応するSpotify URLが入れ替わる。
+// ---------------- 曲名を書き換えたら YouTube リンクを自動更新 ----------------
+// 一度だけ installSongLinkAutoUpdate() を実行するとトリガーが登録され、
+// 以後は楽曲登録シートの曲名セルを編集するたびに、対応するURLが入れ替わる。
 // （UrlFetchApp を使うため、簡易トリガーではなくインストール型トリガーが必要）
 
-function installSpotifyAutoUpdate() {
+function installSongLinkAutoUpdate() {
   const bookId = rosterBook().getId();
   // 同じハンドラの古いトリガーは消してから作り直す（二重登録の防止）
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === "onEditRoster") ScriptApp.deleteTrigger(t);
   });
   ScriptApp.newTrigger("onEditRoster").forSpreadsheet(bookId).onEdit().create();
-  return "曲名の編集でSpotifyリンクを自動更新するトリガーを登録しました（対象: " + ROSTER_SHEET + " シート）";
+  return "曲名の編集でYouTubeリンクを自動更新するトリガーを登録しました（対象: " + ROSTER_SHEET + " シート）";
 }
 
-function uninstallSpotifyAutoUpdate() {
+function uninstallSongLinkAutoUpdate() {
   let n = 0;
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === "onEditRoster") { ScriptApp.deleteTrigger(t); n++; }
   });
   return "自動更新トリガーを " + n + " 件削除しました";
 }
+// 旧名（既にトリガーを登録済みの場合はそのまま動くので、付け替えは不要）
+function installSpotifyAutoUpdate() { return installSongLinkAutoUpdate(); }
+function uninstallSpotifyAutoUpdate() { return uninstallSongLinkAutoUpdate(); }
 
 // ---------------- フォーム送信 → 楽曲登録シートへ自動反映 ----------------
 // フォームの回答スプレッドシートID（回答が溜まるシート）
@@ -2453,35 +2456,43 @@ function applyFormResponse(get, dryRun) {
   lines.push("反映先: " + name + " の「" + label + "」" +
     (autoAssigned ? "（未指定のため空き枠を自動割当）" : ""));
 
-  // Spotify検索（キー未設定・認証失敗と「本当に見つからない」を区別する）
-  let spot = null, spotErr = "";
-  try { spot = spotifySearchTrack(spotifyToken(), artist, song); }
-  catch (err) { spotErr = String(err && err.message ? err.message : err).slice(0, 200); }
-  const failMsg = spotErr
-    ? "Spotify連携でエラー: " + spotErr + "（testSpotifySearch で確認してください）"
-    : "Spotifyで見つかりませんでした: " + titleCell;
+  // YouTube検索（キー未設定・通信失敗と「本当に見つからない」を区別する）
+  let hit = null, ytErr = "";
+  try { hit = youtubeSearchVideo(artist, song); }
+  catch (err) {
+    const s = String(err && err.message ? err.message : err);
+    ytErr = (s.indexOf("QUOTA") >= 0) ? "本日の無料枠を使い切りました" : s.slice(0, 200);
+  }
+  const failMsg = ytErr
+    ? "YouTube連携でエラー: " + ytErr + "（publishStatus / YOUTUBE_API_KEY を確認してください）"
+    : "YouTubeで見つかりませんでした: " + titleCell;
 
   if (!dryRun) {
     sh.getRange(row, col + 1).setValue(titleCell);
-    if (col !== 13) { // 名前アナウンスにはSpotify欄が無い
+    if (col !== 13) { // 名前アナウンスにはリンク欄が無い
       const pair = spotifyColPairs().filter(function (p) { return p.title === col; })[0];
       if (pair) {
         const urlCell = sh.getRange(row, pair.url + 1);
-        if (spot) {
-          urlCell.setValue(spot.url);
-          urlCell.setNote((spot.score != null && spot.score < 0.6 ? "【要確認】" : "") +
-            "自動取得: " + spot.artist + " / " + spot.name +
-            (spot.score != null ? "（一致度 " + spot.score + "）" : ""));
+        if (hit) {
+          urlCell.setValue(hit.url);
+          urlCell.setNote((hit.kind === "embed" && hit.score < 0.6 ? "【要確認】" : "") +
+            "自動取得: " + hit.title + (hit.channel ? "（" + hit.channel + "）" : "") +
+            (hit.kind === "embed" ? "（一致度 " + hit.score + "）" : "") +
+            (hit.via ? "\n" + hit.via : ""));
         }
         // エラーのときは既存のリンクを消さない（手で貼ったものを守る）
-        else if (!spotErr) { urlCell.clearContent(); urlCell.setNote(failMsg); }
+        else if (!ytErr) { urlCell.clearContent(); urlCell.setNote(failMsg); }
         else { urlCell.setNote(failMsg); }
       }
     }
     try { CacheService.getScriptCache().remove("music"); } catch (err) {}
+    invalidatePageCaches();
   }
 
-  lines.push("Spotify: " + (spot ? (spot.artist + " / " + spot.name + "  " + spot.url)
+  lines.push("リンク: " + (hit
+    ? (hit.kind === "embed" ? "動画を埋め込めます　" :
+       hit.kind === "music" ? "YouTube Music（MV未公開などのため）　" : "YouTube Musicの検索リンク　") +
+      hit.title + "  " + hit.url
     : failMsg + "（手動で貼ってください）"));
   lines.push("");
   lines.push("▼ あなたの作業");
@@ -2548,25 +2559,32 @@ function onEditRoster(e) {
       }
       const sp = splitSongTitle(raw);
       let hit = null, hitErr = "";
-      try { hit = spotifySearchTrack(spotifyToken(), sp.artist, sp.title); }
-      catch (err) { hitErr = String(err && err.message ? err.message : err).slice(0, 200); }
+      try { hit = youtubeSearchVideo(sp.artist, sp.title); }
+      catch (err) {
+        const s = String(err && err.message ? err.message : err);
+        hitErr = (s.indexOf("QUOTA") >= 0) ? "本日の無料枠を使い切りました" : s.slice(0, 200);
+      }
       if (hit) {
         urlCell.setValue(hit.url);
-        urlCell.setNote((hit.score != null && hit.score < 0.6 ? "【要確認】" : "") +
-          "自動取得: " + hit.artist + " / " + hit.name +
-          (hit.score != null ? "（一致度 " + hit.score + "）" : ""));
+        urlCell.setNote((hit.kind === "embed" && hit.score < 0.6 ? "【要確認】" : "") +
+          "自動取得: " + hit.title + (hit.channel ? "（" + hit.channel + "）" : "") +
+          (hit.kind === "embed" ? "（一致度 " + hit.score + "）" : "") +
+          (hit.via ? "\n" + hit.via : ""));
       } else if (hitErr) {
         // 連携エラーのときは既存リンクを消さない（手で貼ったものを守る）
-        urlCell.setNote("Spotify連携でエラー: " + hitErr + "（testSpotifySearch で確認してください）");
+        urlCell.setNote("YouTube連携でエラー: " + hitErr + "（YOUTUBE_API_KEY を確認してください）");
       } else {
         urlCell.clearContent();
-        urlCell.setNote("Spotifyで見つかりませんでした: " + raw);
+        urlCell.setNote("YouTubeで見つかりませんでした: " + raw);
       }
       touched = true;
     });
 
     // 登場曲ページのキャッシュを消して、サイトにすぐ反映されるようにする
-    if (touched) { try { CacheService.getScriptCache().remove("music"); } catch (err) {} }
+    if (touched) {
+      try { CacheService.getScriptCache().remove("music"); } catch (err) {}
+      invalidatePageCaches();
+    }
   } catch (err) {
     Logger.log("onEditRoster エラー: " + err);
   }
