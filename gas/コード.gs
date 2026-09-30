@@ -22,7 +22,7 @@ const TS_SHEET = "タイムスタンプ"; // YouTube用タイムスタンプの�
 const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v69";
+const SITE_VER = "site v70";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -538,6 +538,99 @@ function setupAliasSheet() {
 }
 
 // 一度だけ実行: ロースターのスプレッドシートに「シーズン」シートを作り、現行シーズンを1行入れる
+// ---------------- 新シーズンの用意 ----------------
+// 今シーズンのスプレッドシートをコピーしたあと、この関数で中身を空にする。
+// 消すもの: 日付シート（1試合1枚）/ 月別の経過 / 月間成績 / LIVE / 戦評・タイムスタンプの中身
+// 残すもの: 全試合経過（見出しだけ）/ シーズン通算成績 / 左右登録 など
+//
+// 使い方:
+//   1) 今シーズンのスプシを「ファイル → コピーを作成」でコピー
+//   2) 下の NEW_SEASON_URL にコピーのURLを貼る
+//   3) prepareNewSeasonDryRun を実行 → 何を消すかログで確認
+//   4) 問題なければ prepareNewSeason を実行
+//   5) 「シーズン」シートに行を足して、新シーズンの C列 を TRUE にする
+const NEW_SEASON_URL = "";
+
+function prepareNewSeasonDryRun() { return prepareNewSeason_(true); }
+function prepareNewSeason() { return prepareNewSeason_(false); }
+
+function prepareNewSeason_(dryRun) {
+  const id = fileId(NEW_SEASON_URL);
+  if (!id) return "この関数の上にある NEW_SEASON_URL に、コピーしたスプレッドシートのURLを貼ってから実行してください";
+  const cur = currentSeasonId();
+  if (id === cur) {
+    return "中止しました: 指定されたのは今の現行シーズンのスプレッドシートです。\n" +
+      "コピーを作って、そのURLを指定してください（元のデータが消えるのを防ぐため）。";
+  }
+  let book;
+  try { book = SpreadsheetApp.openById(id); }
+  catch (e) { return "そのスプレッドシートを開けません: " + e; }
+
+  const del = [], clear = [], keep = [];
+  book.getSheets().forEach(function (sh) {
+    const n = sh.getName();
+    if (/^\d{4}-\d{2}-\d{2}/.test(n) || /^\d{8}$/.test(n)) del.push(n);            // 日付シート
+    else if (n !== ALL_GAMES && n.indexOf("試合経過") >= 0) del.push(n);            // 月別の経過
+    else if (n !== SEISEKI_TEMPLATE && /成績$/.test(n)) del.push(n);                // 月間成績
+    else if (liveSlotOfSheet(n) > 0) del.push(n);                                   // LIVE / LIVE2 …
+    else if (n === ALL_GAMES || n === REVIEW_SHEET || n === TS_SHEET) clear.push(n); // 中身だけ消す
+    else keep.push(n);                                                              // そのまま残す
+  });
+
+  const lines = [];
+  lines.push((dryRun ? "【確認のみ・まだ変更していません】" : "【実行しました】") + " 対象: " + book.getName());
+  lines.push("");
+  lines.push("■ シートごと消す（" + del.length + "枚）");
+  lines.push("　" + (del.join(", ") || "なし"));
+  lines.push("");
+  lines.push("■ 中身だけ消して見出しは残す（" + clear.length + "枚）");
+  lines.push("　" + (clear.join(", ") || "なし"));
+  lines.push("");
+  lines.push("■ そのまま残す（" + keep.length + "枚）");
+  lines.push("　" + (keep.join(", ") || "なし"));
+
+  if (!dryRun) {
+    del.forEach(function (n) {
+      const sh = book.getSheetByName(n);
+      if (sh) book.deleteSheet(sh);
+    });
+    clear.forEach(function (n) {
+      const sh = book.getSheetByName(n);
+      if (!sh) return;
+      if (sh.getLastRow() >= 2) sh.deleteRows(2, sh.getLastRow() - 1);
+    });
+    // 全試合経過の見出しを入れ直す（空だとレイアウト判定が効かなくなる）
+    const all = book.getSheetByName(ALL_GAMES);
+    if (all) {
+      all.getRange(1, 1, 1, HEADER.length).setValues([HEADER]);
+      all.getRange(1, PBLOCK_COL, 1, PBLOCK_HEADER.length).setValues([PBLOCK_HEADER]);
+    }
+    const rv = book.getSheetByName(REVIEW_SHEET);
+    if (rv) rv.getRange(1, 1, 1, 1).setNumberFormat("@");
+    const ts = book.getSheetByName(TS_SHEET);
+    if (ts) {
+      ts.getRange(1, 1, 1, 3).setValues([["試合シート名", "本文", "更新日時"]]);
+      ts.getRange(1, 1, 1, 1).setNumberFormat("@");
+    }
+    SpreadsheetApp.flush();
+    lines.push("");
+    lines.push("全試合経過の見出しを入れ直しました。");
+    lines.push("");
+    lines.push("▼ 次にやること");
+    lines.push("1. 「シーズン」シート（楽曲登録のスプシ）を開く");
+    lines.push("2. 今の現行シーズンの行の C列 を空にする");
+    lines.push("3. 新しい行を足して A=シーズン名 / B=このURL / C=TRUE");
+    lines.push("   " + book.getUrl());
+    lines.push("4. GASで clearSiteCache → publishReset → publishSite を実行");
+  } else {
+    lines.push("");
+    lines.push("問題なければ prepareNewSeason を実行してください。");
+  }
+  const msg = lines.join("\n");
+  Logger.log(msg);
+  return msg;
+}
+
 function setupSeasonSheet() {
   const book = rosterBook();
   let sh = book.getSheetByName(SEASON_SHEET);
