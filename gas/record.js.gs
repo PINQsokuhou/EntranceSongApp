@@ -1038,6 +1038,32 @@ function announceIds(team, inning, orderIndex, m){
   if (m && m.nameAnnounce) ids.push(m.nameAnnounce.id);
   return ids;
 }
+/** ランナー自動スタートのアナウンス（3ボール2ストライク・2アウト・一塁に走者）。
+ *  カウントが動いたときだけ鳴らす（2ストライク後のファールでは鳴らし直さない） */
+function musicAutoStart(countChanged){
+  if (!state.musicOn || !countChanged) return;
+  if (!announcements.autoStart) return;
+  if (state.balls === 3 && state.strikes === 2 && state.outs === 2 && state.bases[0]) {
+    showToast('ランナー自動スタート');
+    musicPlayIds([announcements.autoStart.id]);
+  }
+}
+/** 投手交代アナウンス: 前半 → 前の投手の名前 → 後半 → 新しい投手の名前。
+ *  投手曲を鳴らす場合は、曲が流れてから（delayMs後）にアナウンスを重ねる。 */
+function musicPitcherChange(defTeam, outgoingName, incomingName, delayMs){
+  if (!state.musicOn) return;
+  if (!outgoingName || outgoingName === incomingName) return; // 初回の設定では鳴らさない
+  var pre = (defTeam === 'first') ? 'pitchChangeFirst' : 'pitchChangeSecond';
+  var om = rosterByName(outgoingName), im = rosterByName(incomingName);
+  var ids = [];
+  if (announcements[pre + '1']) ids.push(announcements[pre + '1'].id);
+  if (om && om.nameAnnounce) ids.push(om.nameAnnounce.id);
+  if (announcements[pre + '2']) ids.push(announcements[pre + '2'].id);
+  if (im && im.nameAnnounce) ids.push(im.nameAnnounce.id);
+  if (!ids.length) return;
+  if (delayMs > 0) setTimeout(function(){ if (state.musicOn) musicPlayIds(ids); }, delayMs);
+  else musicPlayIds(ids);
+}
 /** 結果ボタンを押したときの再生。安打だけは塁打数が決まるまで待つ */
 function musicOnResult(type){
   if (!state.musicOn) return;
@@ -1178,6 +1204,7 @@ function addBall(){
   pushUndo();
   state.pitchCount++; state.balls++; state.curPitches.push('ボール');
   if (state.balls >= 4) { beginResult(RESULT_BB, { snapshot: false }); return; }
+  musicAutoStart(true);
   saveState(); render();
 }
 function addStrike(){
@@ -1185,14 +1212,18 @@ function addStrike(){
   pushUndo();
   state.pitchCount++; state.strikes++; state.curPitches.push('ストライク');
   if (state.strikes >= 3) state.awaitingStrikeoutChoice = true;
+  else musicAutoStart(true);
   saveState(); render();
 }
 function addFoul(){
   if (!state.started || state.pending || state.needPitcherPrompt) return;
   pushUndo();
   state.pitchCount++;
-  if (state.strikes < 2) state.strikes++;
+  var strikeChanged = state.strikes < 2;
+  if (strikeChanged) state.strikes++;
   state.curPitches.push('ファール');
+  // 2ストライク後のファールはカウントが変わらないので鳴らし直さない
+  musicAutoStart(strikeChanged);
   saveState(); render();
 }
 function confirmStrikeoutChoice(swing){
@@ -1351,11 +1382,13 @@ function changePitcher(team, name){
   var prev = (team === 'first') ? state.pitcherOfFirst : state.pitcherOfSecond;
   if (team === 'first') state.pitcherOfFirst = name; else state.pitcherOfSecond = name;
   state.needPitcherPrompt = false;
-  // 投手が代わったら投手曲（同じ投手の再設定では鳴らさない）
+  // 投手が代わったら投手曲 → 3秒後に交代アナウンス（アプリと同じ）。
+  // 投手曲が無い場合はすぐアナウンスだけ鳴らす。
   if (state.musicOn && name && name !== prev) {
     var pm = rosterByName(name);
     var ps = pm && (pm.pitchingSongs || [])[0];
-    if (ps) musicPlayOne(ps);
+    if (ps) { musicPlayOne(ps); musicPitcherChange(team, prev, name, 3000); }
+    else musicPitcherChange(team, prev, name, 0);
   }
   closeModal();
   saveState(); render(); postLiveState();
