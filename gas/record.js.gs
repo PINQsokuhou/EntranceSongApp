@@ -861,19 +861,33 @@ function musicPut(id, blob){
     });
   });
 }
-/** GASから音源を取ってきて保存する。既にあれば何もしない */
+/** GASから音源を取ってきて保存する。既にあれば何もしない。
+ *  記録ページはGASのiframeの中で動くため、fetch は CORS で弾かれることがある。
+ *  名簿取得と同じく、まず google.script.run を使い、駄目なら fetch に落とす。 */
 function musicFetchOne(id){
   return musicGet(id).then(function(b){
     if (b) return false;
-    return fetch(GAS_URL + '?action=song&id=' + encodeURIComponent(id), { redirect: 'follow' })
-      .then(function(r){ return r.json(); })
-      .then(function(j){
-        if (!j || !j.ok || !j.dataBase64) throw new Error(j && j.error ? j.error : '取得できません');
-        var bin = atob(j.dataBase64), n = bin.length, u8 = new Uint8Array(n);
-        for (var i = 0; i < n; i++) u8[i] = bin.charCodeAt(i);
-        return musicPut(id, new Blob([u8], { type: 'audio/mpeg' })).then(function(){ return true; });
-      });
+    var get;
+    if (hasGSR() && !gsrBroken) {
+      get = withTimeout(gsrCall('getSong', id), 60000, '楽曲取得(script.run)')
+        .catch(function(){
+          gsrBroken = true;
+          return withTimeout(musicFetchSong_(id), 60000, '楽曲取得(fetch)');
+        });
+    } else {
+      get = withTimeout(musicFetchSong_(id), 60000, '楽曲取得(fetch)');
+    }
+    return get.then(function(j){
+      if (!j || !j.ok || !j.dataBase64) throw new Error(j && j.error ? j.error : '取得できません');
+      var bin = atob(j.dataBase64), n = bin.length, u8 = new Uint8Array(n);
+      for (var i = 0; i < n; i++) u8[i] = bin.charCodeAt(i);
+      return musicPut(id, new Blob([u8], { type: 'audio/mpeg' })).then(function(){ return true; });
+    });
   });
+}
+function musicFetchSong_(id){
+  return fetch(GAS_URL + '?action=song&id=' + encodeURIComponent(id), { redirect: 'follow' })
+    .then(function(r){ return r.json(); });
 }
 
 /** この試合で使う音源のIDを集める（出場メンバーの曲＋アナウンス） */
@@ -909,7 +923,10 @@ function musicPrepare(){
         (state.musicPrep.failed ? ' / 取得できず ' + state.musicPrep.failed + '曲' : '') + '）');
       return;
     }
-    musicFetchOne(ids[i]).catch(function(){ state.musicPrep.failed++; }).then(function(){
+    musicFetchOne(ids[i]).catch(function(err){
+      state.musicPrep.failed++;
+      state.musicPrep.lastError = String(err && err.message ? err.message : err).slice(0, 120);
+    }).then(function(){
       i++; state.musicPrep.done = i; render();
       setTimeout(step, 0);
     });
@@ -927,6 +944,29 @@ function musicElem(){
   }
   return musicEl;
 }
+
+// iPhone・iPadは「画面を触った操作の中で直接 play() を呼ぶ」ことを求める。
+// この記録ページは IndexedDB から音源を読んでから鳴らすので、その時点では
+// タップの文脈から外れてしまい、そのままでは弾かれる。
+// そこで最初のタップで無音を1回鳴らして解除しておく（以後はいつでも鳴らせる）。
+var SILENT_WAV = 'data:audio/wav;base64,UklGRsQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+var musicUnlocked = false, musicUnlockTrying = false;
+function musicUnlock(){
+  if (musicUnlocked || musicUnlockTrying) return;
+  musicUnlockTrying = true;
+  try {
+    var el = musicElem();
+    el.src = SILENT_WAV;
+    var p = el.play();
+    if (p && p.then) {
+      p.then(function(){ musicUnlocked = true; musicUnlockTrying = false; })
+       .catch(function(){ musicUnlockTrying = false; }); // 次のタップでもう一度試す
+    } else { musicUnlocked = true; musicUnlockTrying = false; }
+  } catch (e) { musicUnlockTrying = false; }
+}
+// どこをタップしても解除を試みる（結果ボタンでも打順の設定でもよい）
+document.addEventListener('touchend', musicUnlock, true);
+document.addEventListener('click', musicUnlock, true);
 function musicRevoke(){ if (musicUrl) { try { URL.revokeObjectURL(musicUrl); } catch (e) {} musicUrl = null; } }
 function musicPlayBlob(blob){
   var el = musicElem();
@@ -936,8 +976,13 @@ function musicPlayBlob(blob){
   el.src = musicUrl;
   el.volume = 1;
   var p = el.play();
-  if (p && p.catch) p.catch(function(){});
+  if (p && p.catch) p.catch(function(err){
+    // 鳴らせなかった理由を黙って捨てない（iOSの再生制限・消音スイッチなど）
+    musicLastError = String(err && err.name ? err.name : err);
+    showToast('曲を鳴らせませんでした（' + musicLastError + '）。画面を一度タップしてから試してください');
+  });
 }
+var musicLastError = '';
 function musicNextInSeq(){
   if (!musicSeq.length) {
     var d = musicSeqDone; musicSeqDone = null;
@@ -1595,14 +1640,19 @@ function musicSetupHtml(){
       h += '<div class="footbtns"><button class="btn outline block" onclick="RB.musicPrepare()">' +
         (p ? '楽曲を再取得' : '楽曲を準備（ダウンロード）') + '</button></div>';
       if (p && !p.running) {
-        h += '<div class="sub">' + p.total + '曲を端末に保存済み' +
-          (p.failed ? '（取得できず ' + p.failed + '曲）' : '') + '</div>';
+        h += '<div class="sub">' + (p.total - p.failed) + ' / ' + p.total + '曲を端末に保存済み' +
+          (p.failed ? '　取得できず ' + p.failed + '曲' : '') + '</div>';
+        if (p.lastError) h += '<div class="sub" style="color:#e5484d">最後のエラー: ' + esc(p.lastError) + '</div>';
       }
     }
     h += '<div class="sub">打順と先発投手を決めてから準備してください。' +
       '2回目以降は保存済みのぶんを飛ばします。</div>';
     h += '<div class="footbtns"><button class="btn gray block" onclick="RB.musicTest()">' +
       '音が出るか試す（1番打者の曲）</button></div>';
+    h += '<div class="sub">' + (musicUnlocked ? '✓ この端末で音を鳴らせる状態です'
+      : 'iPhone・iPadは画面を一度タップすると鳴らせるようになります') +
+      (musicLastError ? '　／ 直近のエラー: ' + esc(musicLastError) : '') + '</div>';
+    h += '<div class="sub">鳴らない場合は、端末が消音（マナーモード）になっていないか確認してください。</div>';
   } else {
     h += '<div class="sub">ONにすると、打者の登場曲・チャンス曲・攻守交代のアナウンスを鳴らします。' +
       'アプリと同じ選曲ルールです。</div>';
