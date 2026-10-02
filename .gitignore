@@ -1,0 +1,24 @@
+# ビルドやエディタが自動生成するもの。追跡していると作業ツリーが常に汚れた状態になり、
+# push前に毎回 --autostash が必要になるため除外する。
+
+# Gradle
+.gradle/
+build/
+app/build/
+.kotlin/
+
+# APKを配るときは、ここに入れるのではなく GitHub の Releases に上げる
+# （ビルドのたびに差分が出て、push前の作業が煩雑になるため）
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+captures/
+.cxx/
+
+# Android SDK の場所など、このPC固有の設定（Android Studioが自動生成する）
+local.properties
+
+# OS
+.DS_Store
+Thumbs.db
