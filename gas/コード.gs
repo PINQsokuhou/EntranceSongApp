@@ -23,13 +23,24 @@ const SEISEKI_TEMPLATE = "シーズン通算成績";
 
 // ★新シーズンを始めるとき★
 // 今シーズンのスプレッドシートを「ファイル → コピーを作成」でコピーし、
-// そのコピーのURLをここに貼ってから prepareNewSeasonDryRun → prepareNewSeason を実行する。
+// そのコピーのURLを【スクリプトプロパティ】の NEW_SEASON_URL に入れてから
+// prepareNewSeasonDryRun → prepareNewSeason を実行する。
+//   プロジェクトの設定 → スクリプト プロパティ → プロパティを追加
+//   名前: NEW_SEASON_URL / 値: コピーしたスプレッドシートのURL
 // （コピーの中身を空にする。詳しい手順は prepareNewSeason_ のコメントを参照）
-// 済んだら "" に戻しておくこと。
+// 済んだらプロパティごと削除しておくこと。
+//
+// ここに直接書かないこと。自動デプロイ係（gas/自動デプロイ.gs）を動かしていると、
+// エディタで書いた値はGitHubの内容で上書きされて消える。
 const NEW_SEASON_URL = "";
 
+// 実際の取得口。スクリプトプロパティを優先し、無ければ上の定数を使う
+function newSeasonUrl() {
+  return PropertiesService.getScriptProperties().getProperty("NEW_SEASON_URL") || NEW_SEASON_URL;
+}
+
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v72";
+const SITE_VER = "site v73";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -551,7 +562,7 @@ function setupAliasSheet() {
 //
 // 使い方:
 //   1) 今シーズンのスプシを「ファイル → コピーを作成」でコピー
-//   2) ファイル先頭の NEW_SEASON_URL にコピーのURLを貼る
+//   2) スクリプトプロパティ NEW_SEASON_URL にコピーのURLを入れる
 //   3) prepareNewSeasonDryRun を実行 → 何を消すかログで確認
 //   4) 問題なければ prepareNewSeason を実行
 //   5) 「シーズン」シートに行を足して、新シーズンの C列 を TRUE にする
@@ -560,8 +571,9 @@ function prepareNewSeasonDryRun() { return prepareNewSeason_(true); }
 function prepareNewSeason() { return prepareNewSeason_(false); }
 
 function prepareNewSeason_(dryRun) {
-  const id = fileId(NEW_SEASON_URL);
-  if (!id) return "ファイル先頭（29行目あたり）の NEW_SEASON_URL に、コピーしたスプレッドシートのURLを貼って保存してから実行してください";
+  const id = fileId(newSeasonUrl());
+  if (!id) return "スクリプトプロパティに NEW_SEASON_URL を追加してから実行してください\n" +
+    "（プロジェクトの設定 → スクリプト プロパティ → プロパティを追加 / 値はコピーしたスプレッドシートのURL）";
   const cur = currentSeasonId();
   if (id === cur) {
     return "中止しました: 指定されたのは今の現行シーズンのスプレッドシートです。\n" +
