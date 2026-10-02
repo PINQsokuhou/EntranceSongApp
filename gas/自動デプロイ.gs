@@ -101,6 +101,45 @@ function dryRun() {
   Logger.log("ここまで通れば autoDeploy() も動きます");
 }
 
+/**
+ * 本体とGitHubで中身が違うとき、どこがどう違うのかを出す。
+ * GASエディタで直接直してリポジトリに入れ忘れた変更が無いか、
+ * 自動反映を仕掛ける前に確かめるためのもの
+ */
+function showDiff() {
+  var cur = getContent_(targetId_());
+  var byName = {};
+  cur.files.forEach(function (f) { byName[f.name] = f; });
+
+  SYNC.forEach(function (s) {
+    var a = byName[s.name] ? byName[s.name].source : "";
+    var b = fetchFromGitHub_(s.path);
+    Logger.log("── " + s.name + " ──");
+    if (a === b) { Logger.log("同じ内容です"); return; }
+
+    // 先頭と末尾の一致している部分を外して、食い違う範囲だけ取り出す
+    var p = 0;
+    while (p < a.length && p < b.length && a.charAt(p) === b.charAt(p)) p++;
+    var q = 0;
+    while (q < a.length - p && q < b.length - p &&
+           a.charAt(a.length - 1 - q) === b.charAt(b.length - 1 - q)) q++;
+
+    Logger.log("本体 " + a.length + "文字 / GitHub " + b.length + "文字。" +
+      p + "文字目（" + lineOf_(a, p) + "行目あたり）から食い違う");
+    Logger.log("【直前の文脈】\n" + a.slice(Math.max(0, p - 200), p));
+    Logger.log("【本体にあってGitHubに無い " + (a.length - q - p) + "文字】\n" + clip_(a.slice(p, a.length - q)));
+    Logger.log("【GitHubにあって本体に無い " + (b.length - q - p) + "文字】\n" + clip_(b.slice(p, b.length - q)));
+  });
+}
+
+function clip_(s) {
+  var MAX = 2000;
+  return s.length > MAX ? s.slice(0, MAX) + "\n…（残り " + (s.length - MAX) + "文字は省略）" : s;
+}
+function lineOf_(s, pos) {
+  return s.slice(0, pos).split("\n").length;
+}
+
 /** 準備6: 10分おきの自動実行を仕掛ける */
 function installTrigger() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
