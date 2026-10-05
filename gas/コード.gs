@@ -40,7 +40,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v77";
+const SITE_VER = "site v78";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -52,8 +52,17 @@ const APK_URL = "";
 const APK_VER = "3.3";
 
 // 率系ランキング（打率・防御率など）の規定ライン
-const BAT_MIN_PA = 10;   // 打者: 10打席以上
-const PIT_MIN_OUTS = 15; // 投手: 5回（15アウト）以上
+//
+// 各シーズンの打者には規定を設けない（サークルの正式な規定打席は、下の決まりに沿って
+// ページに書き出すだけにして、ランキング自体は全員を載せる）。
+// 全シーズン通算だけは、1打席だけの選手が打率10割で上位に並ぶのを防ぐため最低限を設ける。
+const CAREER_MIN_PA = 10; // 全シーズン通算の打者: 10打席以上
+const PIT_MIN_OUTS = 15;  // 投手: 5回（15アウト）以上
+
+// サークルの決まり: 活動日×3.1 が規定打席、活動日×1 が規定投球回。
+// 試合数ではなく「活動日」なので、同じ日に2試合あっても1日と数える。
+const PA_PER_DAY = 3.1;
+const IP_PER_DAY = 1;
 
 // ---- 戦評の自動生成（Gemini API）----
 // 使い方: Apps Script の プロジェクトの設定 → スクリプト プロパティ に
@@ -3900,6 +3909,51 @@ function periodOptions() {
 }
 
 // 統一期間の値を {seasonId, sheet, statsOnly} に解く
+/**
+ * その期間の活動日数。分からないときは null。
+ *
+ * 日付シート（1試合1枚）の名前は "YYYY-MM-DD..." なので、名前の先頭10文字を
+ * 重複なく数えれば活動日数になる。同じ日に2試合あってもシートは2枚だが日付は
+ * 同じなので1日と数えられる。シート名だけで済むので全試合経過は読まない。
+ */
+function activeDaysOf(rp) {
+  try {
+    // 成績表しかない年度は試合の日付が分からない。通算は規定を固定値にしているので数えない
+    if (!rp || rp.statsOnly || rp.sheet === CAREER_PERIOD) return null;
+    const mm = /^(\d+)月試合経過$/.exec(String(rp.sheet || ""));
+    const month = mm ? +mm[1] : 0;   // 月間の期間なら、その月の日付だけ数える
+    const days = {};
+    gameSheetNames().forEach(function (n) {
+      const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(n);
+      if (!m) return;
+      if (month && +m[2] !== month) return;
+      days[m[0]] = 1;
+    });
+    return Object.keys(days).length;
+  } catch (e) { return null; }
+}
+
+/** サークルの決まりでの規定打席・規定投球回。活動日が分からなければ null */
+function kiteiOf(rp) {
+  const days = activeDaysOf(rp);
+  if (!days) return null;
+  return { days: days, pa: days * PA_PER_DAY, ip: days * IP_PER_DAY };
+}
+
+/** 規定の案内（成績ページの表の手前に出す） */
+function kiteiBoxHtml(rp) {
+  const k = kiteiOf(rp);
+  if (!k) return "";
+  return '<div class="card" style="line-height:1.8">' +
+    '<b>この期間の規定</b><br>' +
+    '規定打席 <b>' + k.pa.toFixed(1) + '</b> 打席' +
+    '<span class="sub">（活動日 ' + k.days + '日 × ' + PA_PER_DAY + '）</span><br>' +
+    '規定投球回 <b>' + k.ip + '</b> 回' +
+    '<span class="sub">（活動日 ' + k.days + '日 × ' + IP_PER_DAY + '）</span><br>' +
+    '<span class="sub">同じ日に2試合あっても1日と数えます</span>' +
+    '</div>';
+}
+
 function resolvePeriodValue(pv) {
   const v = String(pv || "");
   if (v.indexOf("so:") === 0) return { seasonId: v.slice(3), sheet: STATSONLY_PERIOD, statsOnly: true };
@@ -4157,7 +4211,8 @@ function statRankOf(dataMap, def, isBat, name) {
   Object.keys(dataMap).forEach(function (nm) {
     const d = dataMap[nm];
     if (def.rate) {
-      if (isBat && d.pa < BAT_MIN_PA) return;
+      // この順位表は全シーズン通算の選手ページからしか呼ばれないので通算の基準を使う
+      if (isBat && d.pa < CAREER_MIN_PA) return;
       if (!isBat && d.outs < PIT_MIN_OUTS) return;
     }
     const v = def.val(d);
@@ -4425,7 +4480,8 @@ function renderStats(type, statId, period) {
   if (useSheet) {
     const nameCol = isBat ? 0 : src.split;
     const qc = qualColOf(src, isBat);
-    const minQ = isBat ? BAT_MIN_PA : PIT_MIN_OUTS / 3;
+    // ここは必ず各シーズン（通算は成績シートが無いので下の分岐に行く）。打者は規定なし
+    const minQ = isBat ? 0 : PIT_MIN_OUTS / 3;
     for (let r = 1; r < src.values.length; r++) {
       const nm = normName(src.values[r][nameCol]);
       if (!nm) continue;
@@ -4452,7 +4508,8 @@ function renderStats(type, statId, period) {
     Object.keys(data).forEach(nm => {
       const d = data[nm];
       if (def.rate) {
-        if (isBat && d.pa < BAT_MIN_PA) return;
+        // 打者の規定打席は全シーズン通算のときだけ
+        if (isBat && isCareer && d.pa < CAREER_MIN_PA) return;
         if (!isBat && d.outs < PIT_MIN_OUTS) return;
       }
       const v = def.val(d);
@@ -4480,7 +4537,8 @@ function renderStats(type, statId, period) {
     sel("type", [{ value: "bat", label: "打者成績" }, { value: "pit", label: "投手成績" }], isBat ? "bat" : "pit") +
     periodSelectHtml(period) +
     sel("stat", defs.map(d => ({ value: d.id, label: d.label })), def.id) +
-    '</form>';
+    '</form>' +
+    kiteiBoxHtml(rp);
 
   // ランキング表（同値は同順位）
   let t = '<div class="tbl"><table class="st"><tr><th style="width:3em">順位</th>' +
@@ -4499,8 +4557,10 @@ function renderStats(type, statId, period) {
   body += t;
   const notes = [];
   if (def.rate) {
-    notes.push(isBat ? '規定打席: ' + BAT_MIN_PA + '打席以上'
-      : '規定投球回: ' + ipStr(PIT_MIN_OUTS) + '回以上');
+    // 上の「規定」は決まりの数字。ここはこの表が実際に誰を載せているかの説明
+    if (!isBat) notes.push('この表に載せているのは ' + ipStr(PIT_MIN_OUTS) + '回以上投げた投手です');
+    else if (isCareer) notes.push('全シーズン通算は ' + CAREER_MIN_PA + '打席以上の選手を載せています');
+    else notes.push('打席数での絞り込みはしていません（全員を載せています）');
   }
   if (def.asc) notes.push('数値が小さいほど上位');
   if (!useSheet && isCareer) notes.push('全シーズン通算は試合記録からの集計のため、種目は基本指標のみです');
