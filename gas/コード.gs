@@ -40,7 +40,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v74";
+const SITE_VER = "site v75";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -708,6 +708,9 @@ function saveGameLocked(d) {
   invalidatePageCaches();
   // 静的ファイル（試合一覧＋この試合）も更新しておく。失敗しても保存は成功扱いにする
   try { if (ghToken()) publishSite([name]); } catch (e) { Logger.log("静的書き出しに失敗: " + e); }
+  // 成績と選手ページも中身が変わったが、ここで全部書き出すと記録操作が止まる。
+  // 印だけ付けて、あとは publishPending のトリガーに任せる
+  markSiteDirty_();
   return { ok: true, sheet: name, allGames: !!allSheet, monthly: monthly ? monthly.getName() : null };
 }
 
@@ -3097,6 +3100,72 @@ function publishSite(onlyGames) {
   return msg;
 }
 
+// ---- 変わったページを自動で書き出し直す ----
+//
+// 試合を保存すると、その試合ページと一覧はその場で書き出される。しかし成績や
+// 選手ページも中身が変わっているのに、保存の中で全部（約230ページ）を書き出すと
+// 3分半でも終わらず、試合中の記録操作が止まってしまう。
+// そこで保存時は「書き出しが要る」という印を付けるだけにして、トリガーが
+// 数分おきに続きを進める。publishSite は途中から再開できるので、何回かに分けて
+// 一周し、終わったら印を消す。
+const PUB_DIRTY_KEY = "pubDirty";
+
+/** 「サイトの作り置きが古くなった」と記録する */
+function markSiteDirty_() {
+  try { PropertiesService.getScriptProperties().setProperty(PUB_DIRTY_KEY, "1"); } catch (e) {}
+}
+
+/** トリガーから呼ばれる。印が付いているときだけ、続きを書き出す */
+function publishPending() {
+  const props = PropertiesService.getScriptProperties();
+  if (!props.getProperty(PUB_DIRTY_KEY)) return "書き出すものはありません";
+  if (!ghToken()) return "GITHUB_TOKEN が未設定です";
+
+  // ensureReview が使うのはスクリプトロックなので、ここでは別のロックを使う
+  const lock = LockService.getUserLock();
+  if (!lock.tryLock(5000)) return "前回の書き出しがまだ動いています";
+  try {
+    // 戦評は書き出し中は作らない決まりだが、それだとサイトが静的配信になった今
+    // 作られる機会が二度と来ない。1回につき少しだけ作ることを許す
+    _reviewBudget = 2;
+    const msg = publishSite();
+    _reviewBudget = 0;
+    // 一周すると publishSite が進み具合を 0 に戻す。そうなったら印を消す
+    if ((props.getProperty(PUB_PROGRESS_KEY) || "0") === "0") {
+      props.deleteProperty(PUB_DIRTY_KEY);
+    }
+    return msg;
+  } finally {
+    _reviewBudget = 0;
+    lock.releaseLock();
+  }
+}
+
+/** 数分おきの自動書き出しを仕掛ける（1回実行すればよい） */
+function installPublishTrigger() {
+  removePublishTrigger();
+  ScriptApp.newTrigger("publishPending").timeBased().everyMinutes(5).create();
+  return "5分おきに、古くなったページを書き出し直します";
+}
+
+/** 自動書き出しを止める */
+function removePublishTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === "publishPending") ScriptApp.deleteTrigger(t);
+  });
+  return "自動書き出しを止めました";
+}
+
+/**
+ * スプレッドシートを直接いじったあとに実行する。
+ * 次の自動書き出しで、全ページを最初から作り直させる
+ */
+function publishAllSoon() {
+  publishReset();
+  markSiteDirty_();
+  return "次の自動書き出し（5分以内）で全ページを作り直します";
+}
+
 /** 1試合だけ（＋試合一覧）を書き出す。試合保存後や修正後に使う。 */
 function publishGame(sheetName) {
   const name = String(sheetName || "").trim();
@@ -3282,13 +3351,21 @@ function refreshGame(sheetName) {
 // 静的書き出し中は true。既にある戦評は使うが、無い試合のために新しく生成はしない
 // （65試合ぶんまとめて書き出すときにGeminiを何十回も呼ばないため）
 var _noGenerateReview = false;
+// まとめ書き出し中に、新しく作ってよい戦評の数。
+// 書き出しは一度にGeminiを何十回も呼ばないよう生成を止めているが、サイトが
+// 静的配信になってからは、止めたままだと戦評が作られる機会が二度と来ない。
+// publishPending が毎回少しだけ許可して、新しい試合から順に埋めていく
+var _reviewBudget = 0;
 
 /** 戦評を返す。未生成なら生成して保存（1試合につき1回だけAPIを呼ぶ） */
 function ensureReview(sheetName, rows, pb) {
   let t = getReview(sheetName);
   if (t) return t;
-  if (_noGenerateReview) return "";
   if (!geminiKey() || rows.length === 0) return "";
+  if (_noGenerateReview) {
+    if (_reviewBudget <= 0) return "";
+    _reviewBudget--;   // 実際に作りにいくときだけ減らす
+  }
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(2000)) return ""; // 同時アクセスで二重生成しない
   try {
