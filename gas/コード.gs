@@ -40,7 +40,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v81";
+const SITE_VER = "site v82";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -3946,16 +3946,16 @@ function kiteiOf(rp) {
   return { days: days, pa: days * PA_PER_DAY, ip: days * IP_PER_DAY };
 }
 
-/** 規定の案内（成績ページの表の手前に出す） */
+/** 規定の案内（成績ページの一番下に出す） */
 function kiteiBoxHtml(rp) {
   const k = kiteiOf(rp);
   if (!k) return "";
   return '<div class="card" style="line-height:1.8">' +
     '<b>この期間の規定</b><br>' +
     '規定打席 <b>' + k.pa.toFixed(1) + '</b> 打席' +
-    '<span class="sub">（活動日 ' + k.days + '日 × ' + PA_PER_DAY + '）</span><br>' +
+    '<span class="sub">（活動日×' + PA_PER_DAY + '）</span><br>' +
     '規定投球回 <b>' + k.ip + '</b> 回' +
-    '<span class="sub">（活動日 ' + k.days + '日 × ' + IP_PER_DAY + '）</span><br>' +
+    '<span class="sub">（活動日×' + IP_PER_DAY + '）</span><br>' +
     '<span class="sub">同じ日に2試合あっても1日と数えます</span>' +
     '</div>';
 }
@@ -4543,8 +4543,7 @@ function renderStats(type, statId, period) {
     sel("type", [{ value: "bat", label: "打者成績" }, { value: "pit", label: "投手成績" }], isBat ? "bat" : "pit") +
     periodSelectHtml(period) +
     sel("stat", defs.map(d => ({ value: d.id, label: d.label })), def.id) +
-    '</form>' +
-    kiteiBoxHtml(rp);
+    '</form>';
 
   // ランキング表（同値は同順位）
   let t = '<div class="tbl"><table class="st"><tr><th style="width:3em">順位</th>' +
@@ -4562,15 +4561,14 @@ function renderStats(type, statId, period) {
   t += '</table></div>';
   body += t;
   const notes = [];
-  if (def.rate) {
-    // 上の「規定」は決まりの数字。ここはこの表が実際に誰を載せているかの説明
-    if (!isCareer) notes.push('規定での絞り込みはしていません（全員を載せています）');
-    else notes.push(isBat ? '全シーズン通算は ' + CAREER_MIN_PA + '打席以上の選手を載せています'
+  // 全シーズン通算だけは載せる人を絞っているので、そのことは書いておく
+  if (def.rate && isCareer) {
+    notes.push(isBat ? '全シーズン通算は ' + CAREER_MIN_PA + '打席以上の選手を載せています'
       : '全シーズン通算は ' + ipStr(CAREER_MIN_OUTS) + '回以上投げた投手を載せています');
   }
-  if (def.asc) notes.push('数値が小さいほど上位');
   if (!useSheet && isCareer) notes.push('全シーズン通算は試合記録からの集計のため、種目は基本指標のみです');
   notes.forEach(function (n) { body += '<p class="sub">※ ' + esc(n) + '</p>'; });
+  body += kiteiBoxHtml(rp);   // サークルの決まり。ページの一番下に置く
   return page("個人成績", body, false);
 }
 
