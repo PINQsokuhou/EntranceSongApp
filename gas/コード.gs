@@ -40,7 +40,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v80";
+const SITE_VER = "site v81";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -952,7 +952,12 @@ function getRoster() {
 function getSong(id) {
   try {
     const f = DriveApp.getFileById(id);
-    return { ok: true, name: f.getName(), dataBase64: Utilities.base64Encode(f.getBlob().getBytes()) };
+    const b = f.getBlob();
+    // mime を返さないと、受け取った側が種類を決められない。
+    // Safari は blob の中身と種類が食い違うと再生を拒む（NotSupportedError）ので、
+    // mp3 と決めつけず実際の種類をそのまま渡す（wav のアナウンスが鳴らなかった）
+    return { ok: true, name: f.getName(), mime: b.getContentType(),
+             dataBase64: Utilities.base64Encode(b.getBytes()) };
   } catch (err) {
     return { ok: false, error: String(err) };
   }

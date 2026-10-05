@@ -881,9 +881,27 @@ function musicFetchOne(id){
       if (!j || !j.ok || !j.dataBase64) throw new Error(j && j.error ? j.error : '取得できません');
       var bin = atob(j.dataBase64), n = bin.length, u8 = new Uint8Array(n);
       for (var i = 0; i < n; i++) u8[i] = bin.charCodeAt(i);
-      return musicPut(id, new Blob([u8], { type: 'audio/mpeg' })).then(function(){ return true; });
+      return musicPut(id, new Blob([u8], { type: audioTypeOf(j.mime, j.name) }))
+        .then(function(){ return true; });
     });
   });
+}
+
+/**
+ * 音声の種類を決める。サーバーの申告 → 拡張子 → mp3 の順。
+ *
+ * かつては何でも 'audio/mpeg' と決めつけていたが、Safari は blob の中身と種類が
+ * 食い違うと NotSupportedError を返して鳴らさない。アナウンスに wav があるため
+ * iPad で鳴らなかった。
+ */
+function audioTypeOf(mime, name){
+  var m = String(mime || '').toLowerCase();
+  if (m.indexOf('audio/') === 0) return m;
+  var ext = String(name || '').toLowerCase().split('.').pop();
+  var map = { mp3:'audio/mpeg', wav:'audio/wav', m4a:'audio/mp4', mp4:'audio/mp4',
+              aac:'audio/aac', ogg:'audio/ogg', oga:'audio/ogg', opus:'audio/ogg',
+              flac:'audio/flac', aiff:'audio/aiff', aif:'audio/aiff', caf:'audio/x-caf' };
+  return map[ext] || 'audio/mpeg';
 }
 function musicFetchSong_(id){
   return fetch(GAS_URL + '?action=song&id=' + encodeURIComponent(id), { redirect: 'follow' })
@@ -924,6 +942,35 @@ function musicStoredCount(){
       q.onerror = function(){ rej(q.error); };
     });
   });
+}
+
+/** 保存してある曲を全部捨てる */
+function musicClearAll(){
+  return musicDb().then(function(db){
+    return new Promise(function(res, rej){
+      var t = db.transaction(MUSIC_STORE, 'readwrite');
+      t.objectStore(MUSIC_STORE).clear();
+      t.oncomplete = function(){ res(true); };
+      t.onerror = function(){ rej(t.error); };
+    });
+  });
+}
+
+// 保存の形式。上げると、次に開いたときに保存済みのぶんを捨てて取り直す
+var MUSIC_FMT = '2';
+/**
+ * 形式が古ければ作り直す。
+ * 1 までは何でも mp3 として保存していたため、wav のアナウンスが
+ * iPad（Safari）で鳴らなかった。種類を正しく付け直すには取り直すしかない。
+ */
+function musicMigrate(){
+  var cur = null;
+  try { cur = localStorage.getItem('ppSongsFmt'); } catch (e) {}
+  if (cur === MUSIC_FMT) return Promise.resolve(false);
+  return musicClearAll().then(function(){
+    try { localStorage.setItem('ppSongsFmt', MUSIC_FMT); } catch (e) {}
+    return true;
+  }).catch(function(){ return false; });
 }
 
 // 保存数は非同期でしか取れないので、数え終わったら控えて画面を描き直す
@@ -1005,9 +1052,12 @@ function musicPlayBlob(blob){
   el.volume = 1;
   var p = el.play();
   if (p && p.catch) p.catch(function(err){
-    // 鳴らせなかった理由を黙って捨てない（iOSの再生制限・消音スイッチなど）
+    // 鳴らせなかった理由を黙って捨てない。理由によって直し方が違うので案内も変える
     musicLastError = String(err && err.name ? err.name : err);
-    showToast('曲を鳴らせませんでした（' + musicLastError + '）。画面を一度タップしてから試してください');
+    var hint = musicLastError === 'NotSupportedError'
+      ? 'この端末が対応していない形式です。「楽曲を再取得」を試してください'
+      : '画面を一度タップしてから試してください';
+    showToast('曲を鳴らせませんでした（' + musicLastError + '）。' + hint);
   });
 }
 var musicLastError = '';
@@ -2244,8 +2294,11 @@ function boot(){
     if (state.started && !state.ended) maybePromptPitcher();
     updateLiveLink(); // 再読込しても、この端末が使っている速報枠へリンクする
     render();
-    // 前回ダウンロードした曲がこの端末に残っているかを数えて出す
-    if (state.musicOn) musicRefreshStored();
+    // 保存形式が古ければ作り直したうえで、残っている曲数を数えて出す
+    musicMigrate().then(function(cleared){
+      if (cleared) showToast('音の保存形式を更新しました。楽曲をもう一度ダウンロードしてください');
+      if (state.musicOn) musicRefreshStored();
+    });
   }).catch(function(err){
     state = defaultState();
     var diag = '通信方式: ' + (hasGSR() ? 'google.script.run' : 'fetch') + ' / URL: ' + GAS_URL.slice(0, 60) + '…';
