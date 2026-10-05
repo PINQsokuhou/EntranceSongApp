@@ -40,7 +40,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v73";
+const SITE_VER = "site v74";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -2598,6 +2598,8 @@ function applyFormResponse(get, dryRun) {
     }
     try { CacheService.getScriptCache().remove("music"); } catch (err) {}
     invalidatePageCaches();
+    // 書き出し済みのページも更新しないと、サイトの表示は変わらない
+    try { Logger.log(publishMusic()); } catch (err) { Logger.log("登場曲ページの書き出し: " + err); }
   }
 
   lines.push("リンク: " + (hit
@@ -2691,10 +2693,12 @@ function onEditRoster(e) {
       touched = true;
     });
 
-    // 登場曲ページのキャッシュを消して、サイトにすぐ反映されるようにする
+    // 登場曲ページのキャッシュを消し、書き出し済みのページも更新する
+    // （キャッシュを消すだけではサイトの表示は変わらない）
     if (touched) {
       try { CacheService.getScriptCache().remove("music"); } catch (err) {}
       invalidatePageCaches();
+      try { Logger.log(publishMusic()); } catch (err) { Logger.log("登場曲ページの書き出し: " + err); }
     }
   } catch (err) {
     Logger.log("onEditRoster エラー: " + err);
@@ -3104,6 +3108,31 @@ function publishGame(sheetName) {
     return publishSite(ns.filter(function (n) { return n.indexOf(latest) === 0; }));
   }
   return publishSite([name]);
+}
+
+/**
+ * 登場曲ページだけを書き出し直す。
+ *
+ * ラッパーは書き出し済みのページがあればGASに問い合わせないので、
+ * キャッシュを消すだけではサイトの表示は変わらない。楽曲登録シートが
+ * 変わったら、このページを書き出し直す必要がある。
+ * （フォーム送信と曲名編集から呼ばれる。手で実行してもよい）
+ */
+function publishMusic() {
+  if (!ghToken()) return "GITHUB_TOKEN が未設定です";
+  // トリガー実行だと getUrl() が /dev を返す。その状態で書き出すと
+  // ページ内のリンクが全部 /dev になってしまうので、確かめてから進む
+  const u = siteUrl();
+  if (!u || u.indexOf("/exec") < 0) {
+    return "公開URLが未取得のため中止しました。一度サイトを開いてから再実行してください。";
+  }
+  try {
+    ghCommit_([{ path: "p/" + queryKey_("view=music") + ".html", content: rawHtml(renderMusic()) }],
+      "登場曲ページを書き出し (" + SITE_VER + ")");
+    return "登場曲ページを更新しました";
+  } catch (e) {
+    return "登場曲ページの書き出しに失敗しました: " + e;
+  }
 }
 
 /** 書き出しの進み具合をリセットして、次回は最初から書き出す */
