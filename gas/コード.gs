@@ -40,7 +40,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v78";
+const SITE_VER = "site v79";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -53,11 +53,12 @@ const APK_VER = "3.3";
 
 // 率系ランキング（打率・防御率など）の規定ライン
 //
-// 各シーズンの打者には規定を設けない（サークルの正式な規定打席は、下の決まりに沿って
-// ページに書き出すだけにして、ランキング自体は全員を載せる）。
-// 全シーズン通算だけは、1打席だけの選手が打率10割で上位に並ぶのを防ぐため最低限を設ける。
+// 各シーズンは打者も投手も規定を設けず、全員を載せる（サークルの正式な規定は、下の
+// 決まりに沿ってページに書き出すだけにして、順位の絞り込みには使わない）。
+// 全シーズン通算だけは、1打席だけの選手が打率10割、1アウトだけの投手が防御率0.00で
+// 上位に並ぶのを防ぐため最低限を設ける。
 const CAREER_MIN_PA = 10; // 全シーズン通算の打者: 10打席以上
-const PIT_MIN_OUTS = 15;  // 投手: 5回（15アウト）以上
+const CAREER_MIN_OUTS = 15; // 全シーズン通算の投手: 5回（15アウト）以上
 
 // サークルの決まり: 活動日×3.1 が規定打席、活動日×1 が規定投球回。
 // 試合数ではなく「活動日」なので、同じ日に2試合あっても1日と数える。
@@ -4213,7 +4214,7 @@ function statRankOf(dataMap, def, isBat, name) {
     if (def.rate) {
       // この順位表は全シーズン通算の選手ページからしか呼ばれないので通算の基準を使う
       if (isBat && d.pa < CAREER_MIN_PA) return;
-      if (!isBat && d.outs < PIT_MIN_OUTS) return;
+      if (!isBat && d.outs < CAREER_MIN_OUTS) return;
     }
     const v = def.val(d);
     if (v === null || v === undefined || (typeof v === "number" && isNaN(v) && v !== Infinity)) return;
@@ -4480,8 +4481,8 @@ function renderStats(type, statId, period) {
   if (useSheet) {
     const nameCol = isBat ? 0 : src.split;
     const qc = qualColOf(src, isBat);
-    // ここは必ず各シーズン（通算は成績シートが無いので下の分岐に行く）。打者は規定なし
-    const minQ = isBat ? 0 : PIT_MIN_OUTS / 3;
+    // ここは必ず各シーズン（通算は成績シートが無いので下の分岐に行く）。規定で絞らない
+    const minQ = 0;
     for (let r = 1; r < src.values.length; r++) {
       const nm = normName(src.values[r][nameCol]);
       if (!nm) continue;
@@ -4508,9 +4509,9 @@ function renderStats(type, statId, period) {
     Object.keys(data).forEach(nm => {
       const d = data[nm];
       if (def.rate) {
-        // 打者の規定打席は全シーズン通算のときだけ
-        if (isBat && isCareer && d.pa < CAREER_MIN_PA) return;
-        if (!isBat && d.outs < PIT_MIN_OUTS) return;
+        // 絞り込むのは全シーズン通算のときだけ。各シーズンは全員を載せる
+        if (isCareer && isBat && d.pa < CAREER_MIN_PA) return;
+        if (isCareer && !isBat && d.outs < CAREER_MIN_OUTS) return;
       }
       const v = def.val(d);
       if (v === null || v === undefined || isNaN(v) && v !== Infinity) return;
@@ -4558,9 +4559,9 @@ function renderStats(type, statId, period) {
   const notes = [];
   if (def.rate) {
     // 上の「規定」は決まりの数字。ここはこの表が実際に誰を載せているかの説明
-    if (!isBat) notes.push('この表に載せているのは ' + ipStr(PIT_MIN_OUTS) + '回以上投げた投手です');
-    else if (isCareer) notes.push('全シーズン通算は ' + CAREER_MIN_PA + '打席以上の選手を載せています');
-    else notes.push('打席数での絞り込みはしていません（全員を載せています）');
+    if (!isCareer) notes.push('規定での絞り込みはしていません（全員を載せています）');
+    else notes.push(isBat ? '全シーズン通算は ' + CAREER_MIN_PA + '打席以上の選手を載せています'
+      : '全シーズン通算は ' + ipStr(CAREER_MIN_OUTS) + '回以上投げた投手を載せています');
   }
   if (def.asc) notes.push('数値が小さいほど上位');
   if (!useSheet && isCareer) notes.push('全シーズン通算は試合記録からの集計のため、種目は基本指標のみです');
