@@ -40,7 +40,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v76";
+const SITE_VER = "site v77";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -3572,12 +3572,13 @@ function batStats(rows, top) {
   const map = {};
   let order = 0;
   rows.filter(r => (r.tb === "表") === top).forEach(r => {
-    if (!map[r.batter]) map[r.batter] = { pa: 0, ab: 0, h: 0, bb: 0, rbi: 0, hr: 0, order: order++ };
+    if (!map[r.batter]) map[r.batter] = { pa: 0, ab: 0, h: 0, bb: 0, hbp: 0, rbi: 0, hr: 0, order: order++ };
     const b = map[r.batter];
     b.pa++;   // rowsOf が打者名のある行だけ拾うので、1行＝1打席
     if (isAtBatResult(r.result)) b.ab++;
     if (isHitResult(r.result)) b.h++;
     if (r.result === "四球") b.bb++;
+    if (r.result === "死球") b.hbp++;
     if (r.result === "4塁打") b.hr++;
     b.rbi += r.rbi;
   });
@@ -4827,12 +4828,12 @@ function renderGame(name) {
     const names = Object.keys(st).sort((a, b) => st[a].order - st[b].order);
     if (names.length === 0) return '';
     let t = '<h2>' + title + ' 打者成績</h2><div class="tbl"><table class="st">' +
-      '<tr><th class="name">選手名</th><th>打率</th><th>打席</th><th>安</th><th>四</th><th>点</th><th>本</th></tr>';
+      '<tr><th class="name">選手名</th><th>打率</th><th>打席</th><th>安</th><th>四死</th><th>点</th><th>本</th></tr>';
     names.forEach(n => {
       const b = st[n];
       const sa = seasonBat[n] || { ab: 0, h: 0 };
       t += '<tr><td class="name">' + plink(url, n) + '</td><td>' + avgStr(sa.h, sa.ab) + '</td>' +
-        '<td>' + b.pa + '</td><td>' + b.h + '</td><td>' + b.bb + '</td>' +
+        '<td>' + b.pa + '</td><td>' + b.h + '</td><td>' + (b.bb + b.hbp) + '</td>' +
         '<td>' + b.rbi + '</td><td>' + b.hr + '</td></tr>';
     });
     return t + '</table></div>';
