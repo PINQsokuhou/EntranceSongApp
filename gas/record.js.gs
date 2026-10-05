@@ -891,14 +891,10 @@ function musicFetchSong_(id){
 }
 
 /** この試合で使う音源のIDを集める（出場メンバーの曲＋アナウンス） */
-function musicNeededIds(){
+function musicIdsOf(members){
   var ids = [], seen = {};
   function add(s){ if (s && s.id && !seen[s.id]) { seen[s.id] = 1; ids.push(s.id); } }
-  var names = state.firstOrder.concat(state.secondOrder);
-  if (state.pitcherOfFirst) names.push(state.pitcherOfFirst);
-  if (state.pitcherOfSecond) names.push(state.pitcherOfSecond);
-  uniq(names).forEach(function(n){
-    var m = rosterByName(n);
+  (members || []).forEach(function(m){
     if (!m) return;
     (m.battingSongs || []).forEach(add);
     (m.pitchingSongs || []).forEach(add);
@@ -908,9 +904,41 @@ function musicNeededIds(){
   return ids;
 }
 
+/** この試合に出る人ぶん（打順＋先発投手） */
+function musicNeededIds(){
+  var names = state.firstOrder.concat(state.secondOrder);
+  if (state.pitcherOfFirst) names.push(state.pitcherOfFirst);
+  if (state.pitcherOfSecond) names.push(state.pitcherOfSecond);
+  return musicIdsOf(uniq(names).map(rosterByName));
+}
+
+/** 名簿にいる全員ぶん。通信のいい場所でまとめて保存しておくためのもの */
+function musicAllIds(){ return musicIdsOf(roster); }
+
+/** 端末に実際に残っている曲数を数える */
+function musicStoredCount(){
+  return musicDb().then(function(db){
+    return new Promise(function(res, rej){
+      var q = db.transaction(MUSIC_STORE).objectStore(MUSIC_STORE).count();
+      q.onsuccess = function(){ res(q.result); };
+      q.onerror = function(){ rej(q.error); };
+    });
+  });
+}
+
+// 保存数は非同期でしか取れないので、数え終わったら控えて画面を描き直す
+var musicStored = null;
+function musicRefreshStored(){
+  musicStoredCount().then(function(n){
+    if (musicStored === n) return;
+    musicStored = n; render();
+  }).catch(function(){});
+}
+
 /** 出場メンバーぶんの音源をまとめて用意する */
-function musicPrepare(){
-  var ids = musicNeededIds();
+/** all が true なら名簿の全員ぶん、false ならこの試合に出る人ぶんを取る */
+function musicPrepare(all){
+  var ids = all ? musicAllIds() : musicNeededIds();
   if (!ids.length) { showToast('登録された楽曲がありません'); return; }
   state.musicPrep = { done: 0, total: ids.length, running: true, failed: 0 };
   render();
@@ -918,7 +946,7 @@ function musicPrepare(){
   function step(){
     if (i >= ids.length) {
       state.musicPrep.running = false;
-      saveState(); render();
+      saveState(); render(); musicRefreshStored();
       showToast('楽曲の準備が完了しました（' + ids.length + '曲' +
         (state.musicPrep.failed ? ' / 取得できず ' + state.musicPrep.failed + '曲' : '') + '）');
       return;
@@ -1638,15 +1666,22 @@ function musicSetupHtml(){
       h += '<div class="sub">楽曲を準備中… ' + p.done + ' / ' + p.total + '</div>';
     } else {
       h += '<div class="footbtns"><button class="btn outline block" onclick="RB.musicPrepare()">' +
-        (p ? '楽曲を再取得' : '楽曲を準備（ダウンロード）') + '</button></div>';
+        (p ? '楽曲を再取得（この試合に出る人）' : '楽曲を準備（この試合に出る人）') + '</button></div>';
+      h += '<div class="footbtns"><button class="btn outline block" onclick="RB.musicPrepareAll()">' +
+        '名簿の全員ぶんをダウンロード</button></div>';
       if (p && !p.running) {
-        h += '<div class="sub">' + (p.total - p.failed) + ' / ' + p.total + '曲を端末に保存済み' +
+        h += '<div class="sub">今回の取得: ' + (p.total - p.failed) + ' / ' + p.total + '曲' +
           (p.failed ? '　取得できず ' + p.failed + '曲' : '') + '</div>';
         if (p.lastError) h += '<div class="sub" style="color:#e5484d">最後のエラー: ' + esc(p.lastError) + '</div>';
       }
+      h += '<div class="statline"><span>この端末に保存されている曲</span><b>' +
+        (musicStored === null ? '数えています…' : musicStored + ' 曲') + '</b></div>';
     }
-    h += '<div class="sub">打順と先発投手を決めてから準備してください。' +
-      '2回目以降は保存済みのぶんを飛ばします。</div>';
+    h += '<div class="sub">通信のいい場所で「名簿の全員ぶん」を取っておけば、' +
+      '当日は代打や急な交代があってもそのまま鳴らせます。' +
+      '2回目以降は保存済みのぶんを飛ばすので、すぐ終わります。</div>';
+    h += '<div class="sub">保存は端末の中（ブラウザ）です。履歴やサイトデータを消すと' +
+      '一緒に消えるので、当日はこの数字を見てから出かけてください。</div>';
     h += '<div class="footbtns"><button class="btn gray block" onclick="RB.musicTest()">' +
       '音が出るか試す（1番打者の曲）</button></div>';
     h += '<div class="sub">' + (musicUnlocked ? '✓ この端末で音を鳴らせる状態です'
@@ -2209,6 +2244,8 @@ function boot(){
     if (state.started && !state.ended) maybePromptPitcher();
     updateLiveLink(); // 再読込しても、この端末が使っている速報枠へリンクする
     render();
+    // 前回ダウンロードした曲がこの端末に残っているかを数えて出す
+    if (state.musicOn) musicRefreshStored();
   }).catch(function(err){
     state = defaultState();
     var diag = '通信方式: ' + (hasGSR() ? 'google.script.run' : 'fetch') + ' / URL: ' + GAS_URL.slice(0, 60) + '…';
@@ -2221,10 +2258,11 @@ function boot(){
 RB.toggleMusic = function(){
   state.musicOn = !state.musicOn;
   if (!state.musicOn) musicStop();
-  else musicElem();   // このタップでiOSの再生制限を解除しておく
+  else { musicElem(); musicRefreshStored(); }   // このタップでiOSの再生制限を解除しておく
   saveState(); render();
 };
-RB.musicPrepare = function(){ musicPrepare(); };
+RB.musicPrepare = function(){ musicPrepare(false); };
+RB.musicPrepareAll = function(){ musicPrepare(true); };
 RB.musicStop = function(){ musicStop(); };
 RB.musicTest = function(){
   var n = state.firstOrder[0] || state.secondOrder[0];
