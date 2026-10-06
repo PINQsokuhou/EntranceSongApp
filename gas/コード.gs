@@ -40,7 +40,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v85";
+const SITE_VER = "site v86";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -730,10 +730,29 @@ function saveGameLocked(d) {
 // ---- YouTube用タイムスタンプ本文の保存/取得（試合ごと・複数端末で閲覧するため） ----
 // 専用シート「タイムスタンプ」に [試合シート名, 本文, 更新日時] を1試合1行で持つ。
 // このシートは ?view=ts を開いたときだけ読むので、試合一覧など他ページの速度には影響しない。
+/**
+ * シートの左から cols 列を全部読む。まとめて書き出している間だけ、読んだものを覚えておく。
+ * 戦評・タイムスタンプは長い文章が入っていて、試合ページを1枚作るたびに丸ごと読み直すと
+ * 遅かった（過去シーズンの試合ページが1枚5〜6秒かかっていた）。書き込んだら forgetSheetMemo_ で捨てる
+ */
+function sheetValuesMemo_(name, cols) {
+  const book = ss();
+  const k = "v:" + book.getId() + "/" + name;
+  if (_rowsMemo && _rowsMemo[k]) return _rowsMemo[k];
+  const sh = book.getSheetByName(name);
+  if (!sh) return null;
+  const n = sh.getLastRow();
+  const v = n < 1 ? [] : sh.getRange(1, 1, n, cols).getValues();
+  if (_rowsMemo) _rowsMemo[k] = v;
+  return v;
+}
+function forgetSheetMemo_(name) {
+  if (_rowsMemo) delete _rowsMemo["v:" + ss().getId() + "/" + name];
+}
+
 function getTsText(name) {
-  const sh = ss().getSheetByName(TS_SHEET);
-  if (!sh || sh.getLastRow() < 2) return "";
-  const v = sh.getRange(1, 1, sh.getLastRow(), 2).getValues();
+  const v = sheetValuesMemo_(TS_SHEET, 2);
+  if (!v || v.length < 2) return "";
   for (let r = 1; r < v.length; r++) {
     // 日付として数値化された古い行も読めるように、キーを揃えてから比べる
     if (tsKeyOf(v[r][0]) === String(name)) return String(v[r][1] || "");
@@ -759,6 +778,7 @@ function saveTsText(name, text) {
   const nameCell = sh.getRange(row, 1);
   nameCell.setNumberFormat("@").setValue(String(name));
   sh.getRange(row, 2, 1, 2).setValues([[text, new Date()]]);
+  forgetSheetMemo_(TS_SHEET);
   try { CacheService.getScriptCache().remove("ts:" + name); } catch (e) {}
   return { ok: true };
 }
@@ -3585,9 +3605,8 @@ function geminiKey() {
  * A列の "2026-09-13" は日付に自動変換されていることがあるので、tsKeyOf で文字列に揃えて比べる。
  * 同じ試合の行が複数あるときは一番新しい（下の）行を使う。 */
 function getReview(sheetName) {
-  const sh = ss().getSheetByName(REVIEW_SHEET);
-  if (!sh || sh.getLastRow() < 1) return "";
-  const v = sh.getRange(1, 1, sh.getLastRow(), 2).getValues();
+  const v = sheetValuesMemo_(REVIEW_SHEET, 2);
+  if (!v || !v.length) return "";
   let found = "";
   for (let r = 0; r < v.length; r++) {
     if (tsKeyOf(v[r][0]) === String(sheetName)) found = String(v[r][1] || "");
@@ -3602,6 +3621,7 @@ function saveReview(sheetName, text) {
   const r = sh.getLastRow() + 1;
   sh.getRange(r, 1).setNumberFormat("@");
   sh.getRange(r, 1, 1, 3).setValues([[String(sheetName), text, new Date()]]);
+  forgetSheetMemo_(REVIEW_SHEET);
 }
 
 // 戦評シートの整理（1回実行）:
