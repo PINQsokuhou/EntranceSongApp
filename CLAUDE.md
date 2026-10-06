@@ -24,7 +24,7 @@
 **`.gs` の変更はpushだけでは本番に反映されない。** コミット内容を人がGASエディタに貼る作業が要る。
 
 なお `コード.gs` の変更が**ページの作り方**に関わる場合は、書き出し済みの静的HTMLが
-古いままなので `publishReset` → `publishSite` も必要。
+古いままになる。コード側で **`PUB_VER` を上げておけば**、貼り替え後に自動書き出しが全ページを作り直す。
 
 ### 貼り替えのときの注意
 
@@ -44,21 +44,47 @@ GCP側（Apps Script APIの有効化、OAuth同意画面）の設定が重いの
 GASは1リクエストに1.3〜6秒かかる（スプレッドシートの読み取りではなく**GAS自体の起動コスト**）。
 そこで完成HTMLを GitHub の `site/data/p/<キー>.html` に書き出し、ラッパーがCDNから読む（0.05〜0.15秒）。
 
-- `publishSite()` … 全ページ（試合一覧 / 各試合 / 登場曲 / 成績116種目 / 選手約31人）約230ページ。3分半で時間切れになるが**次回は続きから**再開する。`publishReset()` で先頭に戻る
-- `publishGame()` … 最新日の試合だけ。`saveGame` からも自動で呼ばれる
-- `publishMusic()` … 登場曲ページだけ。フォーム送信・曲名編集から自動で呼ばれる
-- `publishPending()` … **5分おきのトリガー**。印が付いているときだけ続きを書き出し、
-  一周したら印を消す。`saveGame` は印を付けるだけ（保存の中で230ページは書き出せない）
-  - 仕掛ける/止める: `installPublishTrigger()` / `removePublishTrigger()`
-- `publishAllSoon()` … スプシを直接いじったあとに実行。次の自動書き出しで全ページを作り直す
-- `publishArchive()` … **過去シーズン**の成績・選手ページ。中身はもう変わらないので一度だけ作り、
-  終わったら「どのシーズンを作ったか」を控えて以後は何もしない。`publishPending` が、
-  今シーズンに書き出すものが無い回に自動で進める（試合直後は今シーズンを優先）
-  - **`renderStats` / `renderPlayer` の見た目を変えたら `ARCHIVE_VER` を上げること。**
-    上げないと過去シーズンのページだけ古い見た目のまま残る（作り直さない設計のため）
-  - `publishArchiveDryRun()` で件数確認、`publishArchiveReset()` で作り直し
-- 打者⇔投手の切り替えでは種目を送らない（`stat` を disabled にして送信）。送ると
-  `type=pit&stat=打率` のような組み合わせが爆発して書き出しきれず、毎回GASに行っていた
+サイトの**全ページ**（今シーズン・月間・全シーズン通算・過去シーズンの試合/成績/選手）を書き出す。
+GASに行くのは速報（`sheet=LIVE*`）と `view=ts`（タイムスタンプ編集）だけ。
+
+**ジョブ単位で「いつ作り直すか」を管理する**（`pubJobs_()`）:
+
+| ジョブ | 中身 | 作り直すとき |
+|---|---|---|
+| `cur` | 試合一覧・登場曲・今シーズンの成績・全員の選手ページ | 試合のたび |
+| `month:<N月試合経過>` | その月の成績・全員の選手ページ | その月に試合をしたとき |
+| `career` | 全シーズン通算の成績・全員の選手ページ | 試合のたび |
+| `games` | 今シーズンの試合ページ | 初回だけ（1試合ずつは保存時に `publishGame` が書く） |
+| `season:<ID>` | 過去シーズンの一覧・成績・試合・選手 | 一度だけ |
+| `so:<ID>` | 成績のみの年度 | 一度だけ |
+
+- 済んだジョブは `pubDone` に `PUB_VER` と一緒に控える。**`renderStats` / `renderPlayer` / `renderIndex` /
+  `renderGame` の見た目を変えたら `PUB_VER` を上げること**（上げないと古い見た目のまま残る）
+- `saveGame` は `markDirty_(["cur", "month:<月>", "career"])` で印（時刻）を付けるだけ。
+  `publishPending`（**5分おきのトリガー**）が古くなったジョブを優先して進める
+- 印は「作り始めたときの時刻と同じなら」消す。書き出し中に次の試合が保存されても取りこぼさない。
+  途中で時間切れになったジョブ（`pubCur` = `名前#件数#印の時刻`）は続きから。ただしその間に印が
+  付け直されていたら最初から（古い中身と新しい中身が混ざらないように）
+- 中身が同じでURLだけ違うページ（`""` と `season=`、`?view=player&name=X` と `&period=` など）は
+  `also` で1回作って両方に置く
+- 書き出し中だけ `rowsOf` と期間の選択肢を覚える（`withRenderMemo_`）。選手ページ50枚が毎回
+  全試合経過を読み直さないため。普段は覚えない（保存直後に古い中身を返さないため）
+- `publishSite()` … 引数なしは上と同じことを今すぐやる。`publishSite([試合名])` は試合と一覧だけ
+- `publishGame()` / `publishMusic()` … 保存・フォーム送信のときに自動で呼ばれる
+- `publishAllSoon()`（= `publishReset()`）… スプシを直接いじったあと。全ジョブを作り直させる
+- `publishDryRun()` … ジョブごとのページ数と状態（済み/古くなった/未作成）
+- 仕掛ける/止める: `installPublishTrigger()` / `removePublishTrigger()`
+
+**成績ページは全種目を1ページに入れ、種目はブラウザの中で切り替える**（`statsSwitch_` のソースを
+ページに埋める）。種目ごとに別ページだと期間×打者投手×種目で数百ページになり、試合のたびに
+全シーズン通算や月間まで作り直すと追いつかなかった。種目の `<select>` には name を付けない
+（送信しない）。選んだ種目は sessionStorage `ppStat:<bat|pit>` に覚えて、期間を変えた先でも出す。
+古いリンクの `stat=` はラッパーが外して sessionStorage に移す。
+
+**試合一覧の「試合中」カード**は、書き出した時点で止まると試合が始まっても出ない（実際そうなっていた）。
+一覧のページに `liveRefresh_` を埋め、サイト経由のときは `?action=live` で試合中の枠だけ聞き直して
+差し替える（1分ごと）。`GAS_URL` はラッパーのグローバル変数を使う。
+
 - `publishStatus()` … トークンと接続の確認
 - 書き込みは GitHub の **Git Data API**（ref → commit → tree → commit → PATCH ref の5リクエスト。ファイル数に依らない）
 - `GITHUB_TOKEN` をスクリプトプロパティに置く（fine-grained / Contents: Read and write）
@@ -115,7 +141,7 @@ GASは1リクエストに1.3〜6秒かかる（スプレッドシートの読み
 2. `コード.gs` 先頭の設定欄にある `NEW_SEASON_URL` にコピーのURLを貼って保存
 3. `prepareNewSeasonDryRun` → `prepareNewSeason`（全試合経過・戦評・タイムスタンプは中身だけ消し、シーズン通算成績と左右登録は残す。現行スプレッドシートを指定したら中止する安全策あり）
 4. 「シーズン」シートで旧行のC列を空に、新行をTRUEにする
-5. `clearSiteCache` → `publishReset` → `publishSite` → `publishStatus` で「試合シート数: 0」を確認
+5. `clearSiteCache` → `publishAllSoon` → `publishStatus` で「試合シート数: 0」を確認（あとは自動書き出しが進める）
 
 ## git運用
 

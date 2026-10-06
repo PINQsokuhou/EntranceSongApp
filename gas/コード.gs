@@ -40,7 +40,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v83";
+const SITE_VER = "site v84";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -89,6 +89,8 @@ function doGet(e) {
   rememberSiteUrl(); // Webアクセス時だけ正しい /exec が取れるので控えておく
   if (p.action === "roster") return json(getRoster());
   if (p.action === "song") return json(getSong(p.id));
+  // 試合一覧（書き出したページ）が、試合中の枠だけを聞き直しに来る
+  if (p.action === "live") return json({ ok: true, html: rawHtml(liveCardsHtml_(siteUrl()).html) });
 
   // スコアブック記録ページ（ブラウザ版・試合前セットアップ〜1球速報〜試合終了保存）
   // renderRecord() は完全なHTMLを自前で組み立てて返すため、page()やraw=1のURL置換は経由しない
@@ -719,8 +721,9 @@ function saveGameLocked(d) {
   // 静的ファイル（試合一覧＋この試合）も更新しておく。失敗しても保存は成功扱いにする
   try { if (ghToken()) publishSite([name]); } catch (e) { Logger.log("静的書き出しに失敗: " + e); }
   // 成績と選手ページも中身が変わったが、ここで全部書き出すと記録操作が止まる。
-  // 印だけ付けて、あとは publishPending のトリガーに任せる
-  markSiteDirty_();
+  // 「古くなった」印だけ付けて、あとは publishPending のトリガーに任せる。
+  // 変わるのは今シーズン通算・この試合の月・全シーズン通算だけ（他の月や過去シーズンは不変）
+  markDirty_(["cur", monthly ? "month:" + monthly.getName() : "", "career"]);
   return { ok: true, sheet: name, allGames: !!allSheet, monthly: monthly ? monthly.getName() : null };
 }
 
@@ -1121,7 +1124,17 @@ function allGameRows() {
   return _allRowsMemo[k];
 }
 
+// まとめて書き出している間だけ、読んだシートを覚えておく（選手ページ50枚が毎回
+// 全試合経過を読み直すと遅い）。普段は覚えない。保存や速報で書き込んだ直後に
+// 古い中身を返してしまわないよう、書き出し（renderChunk_）の間に限っている
+var _rowsMemo = null;
 function rowsOf(name, book) {
+  const b = book || ss();
+  if (!_rowsMemo) return rowsOfRaw_(name, b);
+  const k = b.getId() + "/" + name;
+  return _rowsMemo[k] || (_rowsMemo[k] = rowsOfRaw_(name, b));
+}
+function rowsOfRaw_(name, book) {
   const sh = (book || ss()).getSheetByName(name);
   if (!sh || sh.getLastRow() < 2) return [];
   // 打席記録は A〜AB(28列)だけ。getDataRange() だと右側の投手成績ブロック(AD列〜)まで
@@ -2998,77 +3011,43 @@ function queryKey_(qs) {
   return s.length.toString(36) + "_" + h.toString(36);
 }
 
-/** 今シーズン通算での成績ランキングの種目一覧（renderStats と同じ選び方） */
-function statDefsForDefault_(isBat) {
-  const src = seisekiRankSource(seisekiSheetFor(ALL_GAMES));
-  const d = sheetRankDefs(src, isBat);
-  return d.length ? d : (isBat ? BAT_RANK : PIT_RANK);
-}
-
-/** 静的に書き出すページの一覧。q はクエリ文字列（先頭の ? なし） */
-function publishTargets_() {
-  const t = [];
-  t.push({ q: "", label: "試合一覧", make: function () { return renderIndex(); } });
-  gameSheetNames().forEach(function (n) {
-    t.push({ q: "view=game&sheet=" + encodeURIComponent(n), label: "試合 " + n,
-             make: function () { return renderGame(n); } });
-  });
-  t.push({ q: "view=music", label: "登場曲", make: function () { return renderMusic(); } });
-
-  // 成績（今シーズン通算）。リンクから来る素の ?view=stats と、種目を選んだ後の形の両方
-  t.push({ q: "view=stats", label: "成績（既定）", make: function () { return renderStats("bat", "", ""); } });
-  ["bat", "pit"].forEach(function (ty) {
-    // 打者⇔投手を切り替えた直後の形（種目は送られてこない）
-    t.push({ q: "view=stats&type=" + ty + "&period=", label: "成績 " + ty + "（切替）",
-             make: function () { return renderStats(ty, "", ""); } });
-  });
-  ["bat", "pit"].forEach(function (ty) {
-    statDefsForDefault_(ty === "bat").forEach(function (d) {
-      t.push({
-        q: "view=stats&type=" + ty + "&period=&stat=" + encodeURIComponent(d.id),
-        label: "成績 " + ty + " " + d.label,
-        make: function () { return renderStats(ty, d.id, ""); }
-      });
-    });
-  });
-
-  // 選手ページ（今シーズン通算）。成績シートに行がある選手ぶん
-  playerNamesForPublish_().forEach(function (nm) {
-    t.push({ q: "view=player&name=" + encodeURIComponent(nm), label: "選手 " + nm,
-             make: function () { return renderPlayer(nm, ""); } });
-    t.push({ q: "view=player&name=" + encodeURIComponent(nm) + "&period=", label: "選手 " + nm + "（期間指定）",
-             make: function () { return renderPlayer(nm, ""); } });
-  });
-  return t;
-}
-
-/** 成績シートに行がある選手名（＝選手ページがある人） */
+/**
+ * 成績シートに行がある選手名（＝選手ページがある人）。ss() のシーズンで数える。
+ * 打者の欄だけでなく投手の欄も見る（投げただけの人の選手ページも要るため）
+ */
 function playerNamesForPublish_() {
   const src = seisekiRankSource(seisekiSheetFor(ALL_GAMES));
   if (!src) return [];
   const out = [], seen = {};
+  const cols = [0];
+  if (src.split > 0) cols.push(src.split);
   for (let r = 1; r < src.values.length; r++) {
-    const nm = normName(src.values[r][0]);
-    if (!nm || seen[nm]) continue;
-    // 「平均」「合計」など集計行は選手ページを持たない
-    if (/^(平均|合計|計|total)$/i.test(nm)) continue;
-    seen[nm] = 1; out.push(nm);
+    cols.forEach(function (c) {
+      const nm = normName(src.values[r][c]);
+      if (!nm || seen[nm]) return;
+      // 「平均」「合計」など集計行は選手ページを持たない
+      if (/^(平均|合計|計|total)$/i.test(nm)) return;
+      seen[nm] = 1; out.push(nm);
+    });
   }
   return out;
 }
 
-const PUB_PROGRESS_KEY = "pubIdx";
-
-/**
- * サイト全体を静的に書き出す。
- * 6分の実行上限に収まらない場合は途中で止め、次に実行したとき続きから進む。
- * onlyGames に試合シート名の配列を渡すと、その試合と試合一覧だけを書き出す。
- */
 /** 一時的に別シーズンを選んだ状態にして fn を実行する（ss() や選手リンクがそのシーズンを向く） */
 function withSeason_(id, fn) {
   const prev = _seasonId;
   _seasonId = id || "";
   try { return fn(); } finally { _seasonId = prev; }
+}
+
+/**
+ * まとめて書き出す間だけ、シートの読み直しを省く。
+ * 保存や速報で書き込んだ直後に古い中身を返さないよう、書き出しの間に限って覚える
+ */
+function withRenderMemo_(fn) {
+  if (_rowsMemo) return fn();   // すでに内側
+  _rowsMemo = {}; _periodOptsMemo = null;
+  try { return fn(); } finally { _rowsMemo = null; _periodOptsMemo = null; }
 }
 
 /**
@@ -3078,14 +3057,17 @@ function withSeason_(id, fn) {
 function renderChunk_(targets, from, started) {
   const files = [], failed = [];
   let i = from, partial = false;
-  _noGenerateReview = true; // まとめ書き出し中はGeminiを呼ばない
+  _noGenerateReview = true; // まとめ書き出し中はGeminiを呼ばない（_reviewBudget の分だけ例外）
   try {
     for (; i < targets.length; i++) {
-      if (Date.now() - started > 3.5 * 60 * 1000) { partial = true; break; }
+      if (Date.now() - started > PUB_BUDGET_MS) { partial = true; break; }
       const tg = targets[i];
       try {
-        const html = withSeason_(tg.season || "", tg.make);
-        files.push({ path: "p/" + queryKey_(tg.q) + ".html", content: rawHtml(html) });
+        const html = rawHtml(withSeason_(tg.season || "", tg.make));
+        // 中身が同じでURLだけ違うページ（also）は、作るのは1回で、置き場所を増やす
+        [tg.q].concat(tg.also || []).forEach(function (q) {
+          files.push({ path: "p/" + queryKey_(q) + ".html", content: html });
+        });
       } catch (e) {
         failed.push(tg.label + "（" + e + "）");
       }
@@ -3096,234 +3078,365 @@ function renderChunk_(targets, from, started) {
   return { files: files, failed: failed, next: i, partial: partial };
 }
 
-// ---- 過去シーズンの書き出し ----
-//
-// 過去シーズンの成績はもう変わらないので、一度書き出せば作り直す必要がない。
-// これまでは今シーズンしか書き出しておらず、期間で過去シーズンを選ぶと毎回GASが
-// そのシーズンのスプレッドシートを開きに行っていた（数秒かかる）。
-//
-// 一周し終えたら「どのシーズンを書き出したか」を控え、以後は何もしない。
-// シーズンが増えたとき（新シーズンに切り替えて前のシーズンが過去になったとき）や、
-// ARCHIVE_VER を上げたときだけ作り直す。
-const PUB_ARCHIVE_IDX = "pubArchiveIdx";
-const PUB_ARCHIVE_DONE = "pubArchiveDone";
-// 成績・選手ページの見た目を変えたら上げる。過去シーズンのページも新しい見た目で作り直す
-const ARCHIVE_VER = "1";
-
-function archiveSig_() {
-  return ARCHIVE_VER + "|" + seasonList().filter(function (s) { return !s.current; })
-    .map(function (s) { return s.id; }).join(",");
-}
-
-/** その期間の成績シートの種目（無ければ基本指標） */
-function statDefsForPeriod_(isBat, period) {
-  const rp = resolvePeriodValue(period);
-  const seiseki = rp.statsOnly ? statsOnlySheetOf(rp.seasonId) : seisekiSheetFor(rp.sheet);
-  const d = sheetRankDefs(seisekiRankSource(seiseki), isBat);
-  return d.length ? d : (isBat ? BAT_RANK : PIT_RANK);
-}
-
-/** 過去シーズンの書き出し対象 */
-function archiveTargets_() {
-  const past = seasonList().filter(function (s) { return !s.current; });
-  // 期間を切り替えると、今見ている種目のIDのまま送られてくる。どのシーズンから
-  // 来ても書き出し済みのページに当たるよう、全シーズンの種目IDを合わせて使う
-  const ids = { bat: {}, pit: {} };
-  function collect(sid, period) {
-    withSeason_(sid, function () {
-      ["bat", "pit"].forEach(function (ty) {
-        statDefsForPeriod_(ty === "bat", period).forEach(function (d) { ids[ty][d.id] = 1; });
-      });
-    });
+/**
+ * 1回のコミットに入れる中身を抑えて、何回かに分けて書く。
+ * 成績ページは全種目を1ページに入れたぶん大きいので、まとめすぎると送りきれない
+ */
+function commitBatched_(files, label) {
+  const LIMIT = 2 * 1024 * 1024;   // バイト（日本語はUTF-8で1文字3バイトとして見積もる）
+  const shas = [];
+  let batch = [], size = 0;
+  function flush() {
+    if (!batch.length) return;
+    shas.push(ghCommit_(batch, label + ": " + batch.length + " ページ (" + SITE_VER + ")"));
+    batch = []; size = 0;
   }
-  collect("", "");
-  past.forEach(function (s) {
-    collect(s.statsSheet ? "" : s.id, (s.statsSheet ? "so:" : "s:") + s.id);
+  files.forEach(function (f) {
+    const n = f.content.length * 3;
+    if (batch.length && size + n > LIMIT) flush();
+    batch.push(f); size += n;
   });
+  flush();
+  return shas;
+}
 
-  const t = [];
+// ================= 静的書き出し（ジョブ） =================
+//
+// サイトの全ページを「いつ作り直す必要があるか」でジョブに分けて管理する。
+// ラッパーは書き出し済みのページがあればGASに問い合わせないので、作り直さないと
+// 表示は変わらない。逆に、変わらないページを毎回作り直すと書き出しが追いつかない。
+//
+//   cur          今シーズン通算（試合一覧・登場曲・成績・全員の選手ページ）… 試合のたびに
+//   month:<名>   今シーズンの月間（成績・全員の選手ページ）… その月に試合をしたら
+//   career       全シーズン通算（成績・全員の選手ページ）… 試合のたびに
+//   games        今シーズンの試合ページ … 1試合ずつは保存時に書くので、ここは初回と作り直し用
+//   season:<ID>  過去シーズン（試合一覧・成績・試合・選手）… もう変わらないので一度だけ
+//   so:<ID>      成績のみの年度 … 一度だけ
+//
+// 終わったジョブは pubDone に PUB_VER と一緒に控え、以後は作り直さない。
+// 試合を保存すると cur / その月 / career に「古くなった」印（時刻）を付ける。
+// 印は書き出し中に付け直されることがあるので、作り始めたときの時刻と同じときだけ消す
+// （書き出し中に次の試合が保存されても、その試合を取りこぼさない）。
+const PUB_VER = "1";               // ページの見た目を変えたら上げる。全ページを作り直す
+const PUB_DONE_KEY = "pubDone";    // { ジョブ名: PUB_VER }
+const PUB_DIRTY_KEY = "pubDirty";  // { ジョブ名: 印を付けた時刻 }
+const PUB_CUR_KEY = "pubCur";      // 途中まで進んだジョブ "名前#件数#印の時刻"
+const PUB_PAST_PLAYERS_KEY = "pubPastPlayers";   // 過去シーズンの選手名（変わらないので控える）
+const PUB_REVIEW_KEY = "pubReviewTries";         // 戦評を作ろうとした回数 { 試合: 回数 }
+const PUB_BUDGET_MS = 3.5 * 60 * 1000;           // 1回の実行で書き出しに使う時間（上限は6分）
+
+function readJsonProp_(key, dflt) {
+  try {
+    const v = JSON.parse(PropertiesService.getScriptProperties().getProperty(key) || "null");
+    return (v && typeof v === "object") ? v : dflt;
+  } catch (e) { return dflt; }   // 古い形式（"1" など）は無かったことにする
+}
+
+/** 試合を保存したときなどに「このジョブは作り直しが要る」と記録する */
+function markDirty_(keys) {
+  const props = PropertiesService.getScriptProperties();
+  const d = readJsonProp_(PUB_DIRTY_KEY, {});
+  const now = String(Date.now());
+  keys.forEach(function (k) { if (k) d[k] = now; });
+  props.setProperty(PUB_DIRTY_KEY, JSON.stringify(d));
+}
+
+/** 今シーズンの月間の経過シート名（新しい月から） */
+function currentMonthSheets_() {
+  return sheetNamesOf(bookById(currentSeasonId())).filter(function (n) {
+    return /^\d+(?:-\d+)?月(?:月間)?試合経過$/.test(n);
+  }).reverse();
+}
+
+/** 過去シーズンの選手名。もう変わらないので、シーズン構成が同じ間は控えたものを使う */
+function pastPlayerNames_() {
+  const props = PropertiesService.getScriptProperties();
+  const past = seasonList().filter(function (s) { return !s.current; });
+  const sig = past.map(function (s) { return s.id; }).join(",");
+  const saved = readJsonProp_(PUB_PAST_PLAYERS_KEY, null);
+  if (saved && saved.sig === sig && saved.names) return saved.names;
+  const seen = {}, names = [];
+  function add(nm) {
+    nm = normName(nm);
+    if (!nm || seen[nm] || /^(平均|合計|計|total)$/i.test(nm)) return;
+    seen[nm] = 1; names.push(nm);
+  }
   past.forEach(function (s) {
-    const so = !!s.statsSheet;
-    const period = (so ? "so:" : "s:") + s.id;
-    const sid = so ? "" : s.id;   // 成績のみの年度はシーズンを切り替えずに読む
-    const pq = "&period=" + encodeURIComponent(period);
-    ["bat", "pit"].forEach(function (ty) {
-      // 打者⇔投手を切り替えた直後の形（種目は送られてこない）
-      t.push({ q: "view=stats&type=" + ty + pq, season: sid, group: s.label, label: s.label + " 成績 " + ty,
-               make: function () { return renderStats(ty, "", period); } });
-      Object.keys(ids[ty]).forEach(function (id) {
-        t.push({ q: "view=stats&type=" + ty + pq + "&stat=" + encodeURIComponent(id), season: sid,
-                 group: s.label, label: s.label + " 成績 " + ty + " " + id,
-                 make: function () { return renderStats(ty, id, period); } });
-      });
-    });
-    // 選手ページ。過去シーズンの成績表から選手名をたどると ?season=ID 付きで来る
-    if (!so) {
-      withSeason_(sid, playerNamesForPublish_).forEach(function (nm) {
-        t.push({ q: "view=player&name=" + encodeURIComponent(nm) + "&season=" + encodeURIComponent(s.id),
-                 season: sid, group: s.label, label: s.label + " 選手 " + nm,
-                 make: function () { return renderPlayer(nm, ""); } });
-      });
+    if (s.statsSheet) {
+      const d = statsOnlyDataOf(s.id);
+      Object.keys(d.bat).concat(Object.keys(d.pit)).forEach(add);
+    } else {
+      withSeason_(s.id, playerNamesForPublish_).forEach(add);
     }
   });
-  return t;
-}
-
-/** 過去シーズンをまだ書き出し終えていなければ true */
-function archivePending_() {
-  return PropertiesService.getScriptProperties().getProperty(PUB_ARCHIVE_DONE) !== archiveSig_();
+  props.setProperty(PUB_PAST_PLAYERS_KEY, JSON.stringify({ sig: sig, names: names }));
+  return names;
 }
 
 /**
- * 過去シーズンの成績・選手ページを書き出す。3分半で区切り、次回は続きから。
- * 自動書き出し（publishPending）が、今シーズンに書き出すものが無いときに進めるので、
- * 普段は手で実行しなくてよい
+ * 選手ページは、どの選手のページからでも期間を選べる。だから期間ごとのページは、
+ * 今シーズンと過去シーズンを合わせた全員ぶん要る
  */
-function publishArchive() {
-  if (!ghToken()) return "GITHUB_TOKEN が未設定です";
+var _everyoneMemo = null;
+function everyone_() {
+  if (_everyoneMemo) return _everyoneMemo;
+  const seen = {}, out = [];
+  withSeason_("", playerNamesForPublish_).concat(pastPlayerNames_()).forEach(function (nm) {
+    if (!seen[nm]) { seen[nm] = 1; out.push(nm); }
+  });
+  return (_everyoneMemo = out);
+}
+
+/** 書き出しのジョブ一覧。targets は必要になったときだけ作る（過去シーズンを開くのは重い） */
+function pubJobs_() {
+  const jobs = [];
+  const seasons = seasonList();
+  const multi = seasons.length >= 2;   // 全シーズン通算・過去シーズンが選べるのは2シーズン以上のとき
+  // also は「中身が同じでURLだけ違う」ページ。1回作って両方に置く
+  function T(q, label, make, season, also) { return { q: q, label: label, make: make, season: season || "", also: also }; }
+  function pl(nm, extra) { return "view=player&name=" + encodeURIComponent(nm) + extra; }
+  function statsPages(t, pq, period, season, label, batAlso) {
+    ["bat", "pit"].forEach(function (ty) {
+      t.push(T("view=stats&type=" + ty + pq, label + " 成績 " + ty,
+        function () { return renderStats(ty, "", period); }, season, ty === "bat" ? batAlso : null));
+    });
+  }
+
+  jobs.push({ key: "cur", label: "今シーズン通算", targets: function () {
+    const t = [
+      // 試合一覧のシーズン選択で今シーズンを選んだときの形（season=）も同じ中身
+      T("", "試合一覧", function () { return renderIndex(); }, "", ["season="]),
+      T("view=music", "登場曲", function () { return renderMusic(); })
+    ];
+    // 一覧からの素の ?view=stats は、打者・今シーズン通算と同じ中身
+    statsPages(t, "&period=", "", "", "今シーズン", ["view=stats"]);
+    // 成績表や試合ページの選手名から来る形と、選手ページで期間を選び直した形（同じ中身）
+    everyone_().forEach(function (nm) {
+      t.push(T(pl(nm, ""), "選手 " + nm, function () { return renderPlayer(nm, ""); }, "", [pl(nm, "&period=")]));
+    });
+    return t;
+  }});
+
+  currentMonthSheets_().forEach(function (m) {
+    jobs.push({ key: "month:" + m, label: m, targets: function () {
+      const pq = "&period=" + encodeURIComponent(m), t = [];
+      statsPages(t, pq, m, "", m);
+      everyone_().forEach(function (nm) {
+        t.push(T(pl(nm, pq), m + " 選手 " + nm, function () { return renderPlayer(nm, m); }));
+      });
+      return t;
+    }});
+  });
+
+  if (multi) {
+    jobs.push({ key: "career", label: "全シーズン通算", targets: function () {
+      const pq = "&period=" + encodeURIComponent(CAREER_PERIOD), t = [];
+      statsPages(t, pq, CAREER_PERIOD, "", "通算");
+      everyone_().forEach(function (nm) {
+        t.push(T(pl(nm, pq), "通算 選手 " + nm, function () { return renderPlayer(nm, CAREER_PERIOD); }));
+      });
+      return t;
+    }});
+  }
+
+  jobs.push({ key: "games", label: "今シーズンの試合", targets: function () {
+    return gameSheetNames().map(function (n) {
+      return T("view=game&sheet=" + encodeURIComponent(n), "試合 " + n, function () { return renderGame(n); });
+    });
+  }});
+
+  if (multi) {
+    seasons.forEach(function (s) {
+      if (s.current) return;
+      if (s.statsSheet) {
+        // 成績のみの年度: 成績表と、選手ページでこの年度を選んだ形だけ
+        jobs.push({ key: "so:" + s.id, label: s.label, targets: function () {
+          const P = "so:" + s.id, pq = "&period=" + encodeURIComponent(P), t = [];
+          statsPages(t, pq, P, "", s.label);
+          everyone_().forEach(function (nm) {
+            t.push(T(pl(nm, pq), s.label + " 選手 " + nm, function () { return renderPlayer(nm, P); }));
+          });
+          return t;
+        }});
+        return;
+      }
+      jobs.push({ key: "season:" + s.id, label: s.label, targets: function () {
+        const sid = s.id, P = "s:" + sid;
+        const sq = "&season=" + encodeURIComponent(sid), pq = "&period=" + encodeURIComponent(P);
+        const t = [
+          T("season=" + encodeURIComponent(sid), s.label + " 試合一覧", function () { return renderIndex(); }, sid),
+          T("view=music" + sq, s.label + " 登場曲", function () { return renderMusic(); }, sid)
+        ];
+        // 一覧からの ?view=stats&season=ID は、打者・このシーズンと同じ中身
+        statsPages(t, pq, P, sid, s.label, ["view=stats" + sq]);
+        withSeason_(sid, gameSheetNames).forEach(function (n) {
+          t.push(T("view=game&sheet=" + encodeURIComponent(n) + sq, s.label + " 試合 " + n,
+            function () { return renderGame(n); }, sid));
+        });
+        // 誰かの選手ページで、期間にこのシーズンを選んだ形。そのシーズンに出ていた人は、
+        // 成績表・試合ページの選手名から来る形（?season=ID）も同じ中身
+        const inSeason = {};
+        withSeason_(sid, playerNamesForPublish_).forEach(function (nm) { inSeason[nm] = 1; });
+        everyone_().forEach(function (nm) {
+          t.push(T(pl(nm, pq), s.label + " 選手 " + nm, function () { return renderPlayer(nm, P); }, sid,
+            inSeason[nm] ? [pl(nm, sq)] : null));
+        });
+        return t;
+      }});
+    });
+  }
+  return jobs;
+}
+
+/**
+ * 戦評がまだ無い試合（新しい順に2試合まで）。書き出し中は戦評を作らない決まりなので、
+ * ここで少しずつ作らせる。作れなかった試合は3回で諦める（Geminiの不調で毎回呼ばない）
+ */
+function reviewTargets_() {
+  if (!geminiKey()) return [];
+  const have = {};
+  const sh = ss().getSheetByName(REVIEW_SHEET);
+  if (sh && sh.getLastRow() >= 1) {
+    sh.getRange(1, 1, sh.getLastRow(), 2).getValues().forEach(function (r) {
+      if (String(r[1] || "")) have[tsKeyOf(r[0])] = 1;
+    });
+  }
+  const tries = readJsonProp_(PUB_REVIEW_KEY, {});
+  return gameSheetNames().filter(function (n) { return !have[n] && (tries[n] || 0) < 3; })
+    .slice(-2).map(function (n) {
+      return { q: "view=game&sheet=" + encodeURIComponent(n), label: "戦評 " + n, review: n,
+               make: function () { return renderGame(n); } };
+    });
+}
+
+/** 書き出しの本体。古くなったジョブを優先して、時間の許すかぎり進める */
+function runPublishJobs_() {
+  if (!ghToken()) return "GITHUB_TOKEN が未設定です。プロジェクトの設定 → スクリプト プロパティ に登録してください。";
+  // トリガー実行だと getUrl() が /dev を返す。その状態で書き出すとリンクが全部 /dev になる
   const u = siteUrl();
   if (!u || u.indexOf("/exec") < 0) {
     return "公開URLが未取得のため中止しました。一度サイトを開いてから再実行してください。";
   }
   const props = PropertiesService.getScriptProperties();
-  const sig = archiveSig_();
-  if (props.getProperty(PUB_ARCHIVE_DONE) === sig) return "過去シーズンは書き出し済みです";
-
   const started = Date.now();
-  const targets = archiveTargets_();
-  // 進み具合は「どのシーズン構成での何件目か」で持つ。途中でシーズンが増えたら最初から
-  const saved = String(props.getProperty(PUB_ARCHIVE_IDX) || "");
-  let from = 0;
-  if (saved.indexOf(sig + "#") === 0) from = parseInt(saved.slice(sig.length + 1), 10) || 0;
-  if (from >= targets.length) from = 0;
+  // 以前の仕組みの控え（全体の進み具合）は使わない
+  props.deleteProperty("pubIdx");
 
-  const r = renderChunk_(targets, from, started);
-  let sha = "-";
-  if (r.files.length) {
-    sha = ghCommit_(r.files, "過去シーズンの書き出し: " + r.files.length + " ページ (" + SITE_VER + ")");
-  }
-  if (r.partial) {
-    props.setProperty(PUB_ARCHIVE_IDX, sig + "#" + r.next);
-  } else {
-    props.deleteProperty(PUB_ARCHIVE_IDX);
-    props.setProperty(PUB_ARCHIVE_DONE, sig);
-  }
-  const msg = "過去シーズン: " + r.files.length + " ページ書き出し / コミット " + sha +
-    "（" + r.next + " / " + targets.length + "）" +
-    (r.partial ? "\n※ 続きは次回の実行で進みます" : "\n過去シーズンの書き出しが終わりました") +
-    (r.failed.length ? "\n作れなかったページ:\n  " + r.failed.join("\n  ") : "");
-  Logger.log(msg);
-  return msg;
+  return withRenderMemo_(function () {
+    const done = readJsonProp_(PUB_DONE_KEY, {});
+    const dirty = readJsonProp_(PUB_DIRTY_KEY, {});
+    const cur = String(props.getProperty(PUB_CUR_KEY) || "").split("#");
+    // 古くなったものを先に（試合直後は今シーズン通算・その月・全シーズン通算）。
+    // その次に、まだ一度も作っていないもの（過去シーズンなど）
+    const need = pubJobs_().filter(function (j) { return done[j.key] !== PUB_VER || dirty[j.key]; });
+    need.sort(function (a, b) { return (dirty[a.key] ? 0 : 1) - (dirty[b.key] ? 0 : 1); });
+
+    const files = [], failed = [], finished = [], log = [];
+    let partialAt = null;
+    for (let k = 0; k < need.length; k++) {
+      const j = need[k], stamp = dirty[j.key] || "";
+      const targets = j.targets();
+      // 前回の途中から。ただし途中で印が付け直されていたら（＝中身が変わった）最初から
+      let from = (cur[0] === j.key && (cur[2] || "") === stamp) ? (parseInt(cur[1], 10) || 0) : 0;
+      if (from >= targets.length) from = 0;
+      const r = renderChunk_(targets, from, started);
+      files.push.apply(files, r.files);
+      failed.push.apply(failed, r.failed);
+      log.push(j.label + " " + r.next + "/" + targets.length);
+      if (r.partial) { partialAt = j.key + "#" + r.next + "#" + stamp; break; }
+      finished.push({ key: j.key, stamp: stamp });
+    }
+
+    // 時間が残っていれば戦評を少し作る
+    let reviewed = [];
+    if (!partialAt) {
+      const rv = reviewTargets_();
+      if (rv.length) {
+        _reviewBudget = rv.length;
+        try {
+          const r = renderChunk_(rv, 0, started);
+          files.push.apply(files, r.files);
+          reviewed = rv.slice(0, r.next).map(function (x) { return x.review; });
+        } finally { _reviewBudget = 0; }
+      }
+    }
+
+    if (!files.length && !finished.length && !reviewed.length) return "書き出すものはありません";
+    const shas = commitBatched_(files, "サイト静的書き出し");
+
+    // 書き込めてから「済み」にする（途中で失敗したら次回やり直す）
+    finished.forEach(function (f) { done[f.key] = PUB_VER; });
+    props.setProperty(PUB_DONE_KEY, JSON.stringify(done));
+    if (finished.length) {
+      // 書き出している間に次の試合が保存されて印が付け直されていたら、その印は残す
+      const lock = LockService.getScriptLock();
+      lock.waitLock(10000);
+      try {
+        const fresh = readJsonProp_(PUB_DIRTY_KEY, {});
+        finished.forEach(function (f) { if (fresh[f.key] === f.stamp) delete fresh[f.key]; });
+        props.setProperty(PUB_DIRTY_KEY, JSON.stringify(fresh));
+      } finally { lock.releaseLock(); }
+    }
+    if (partialAt) props.setProperty(PUB_CUR_KEY, partialAt);
+    else props.deleteProperty(PUB_CUR_KEY);
+    if (reviewed.length) {
+      const tries = readJsonProp_(PUB_REVIEW_KEY, {});
+      reviewed.forEach(function (n) { tries[n] = (tries[n] || 0) + 1; });
+      props.setProperty(PUB_REVIEW_KEY, JSON.stringify(tries));
+    }
+
+    const secs = Math.round((Date.now() - started) / 1000);
+    const msg = "書き出しました: " + files.length + " ページ / コミット " + (shas.join(", ") || "-") +
+      "（" + secs + "秒）\n" + log.join("\n") +
+      (reviewed.length ? "\n戦評を作成: " + reviewed.join(", ") : "") +
+      (partialAt ? "\n\n※ 時間切れ。続きは次回（5分以内）に進みます" : "\n\n書き出すものはすべて終わりました") +
+      (failed.length ? "\n\n作れなかったページ:\n  " + failed.join("\n  ") : "");
+    Logger.log(msg);
+    return msg;
+  });
 }
 
-/** 過去シーズンを作り直させる（ページの見た目を変えたときなど） */
-function publishArchiveReset() {
-  const props = PropertiesService.getScriptProperties();
-  props.deleteProperty(PUB_ARCHIVE_IDX);
-  props.deleteProperty(PUB_ARCHIVE_DONE);
-  return "次の自動書き出しで、過去シーズンを最初から作り直します";
-}
-
-/** 何ページになるかだけ数える（書き出さない） */
-function publishArchiveDryRun() {
-  const t = archiveTargets_();
-  const by = {};
-  t.forEach(function (x) { by[x.group] = (by[x.group] || 0) + 1; });
-  const lines = ["過去シーズンの書き出し対象: " + t.length + " ページ"];
-  Object.keys(by).forEach(function (k) { lines.push("  " + k + ": " + by[k] + " ページ"); });
-  lines.push(archivePending_() ? "（まだ書き出していません）" : "（書き出し済み）");
-  Logger.log(lines.join("\n"));
-  return lines.join("\n");
-}
-
+/**
+ * サイトを静的に書き出す。
+ * 引数なし … 古くなったページ・まだ作っていないページを、時間の許すかぎり書き出す
+ *            （普段は5分おきのトリガーが同じことをするので、手で実行しなくてよい）
+ * onlyGames … 試合シート名の配列。その試合と試合一覧だけを書く（試合の保存直後に使う）
+ */
 function publishSite(onlyGames) {
+  if (!(onlyGames && onlyGames.length)) return runPublishLocked_();
   if (!ghToken()) return "GITHUB_TOKEN が未設定です。プロジェクトの設定 → スクリプト プロパティ に登録してください。";
   const u = siteUrl();
   if (!u || u.indexOf("/exec") < 0) {
     return "公開URLが未取得のため中止しました。一度サイトを開いてから再実行してください。";
   }
-  const props = PropertiesService.getScriptProperties();
   const started = Date.now();
-
-  let targets, partial = false, from = 0;
-  if (onlyGames && onlyGames.length) {
-    targets = [{ q: "", label: "試合一覧", make: function () { return renderIndex(); } }];
-    onlyGames.forEach(function (n) {
-      targets.push({ q: "view=game&sheet=" + encodeURIComponent(n), label: "試合 " + n,
-                     make: function () { return renderGame(n); } });
-    });
-  } else {
-    targets = publishTargets_();
-    from = parseInt(props.getProperty(PUB_PROGRESS_KEY) || "0", 10) || 0;
-    if (from >= targets.length) from = 0; // 一周したので最初から
-  }
-
-  const chunk = renderChunk_(targets, from, started);
-  const files = chunk.files, failed = chunk.failed, i = chunk.next;
-  partial = chunk.partial;
-
-  let sha = "-";
-  if (files.length) {
-    sha = ghCommit_(files, "サイト静的書き出し: " + files.length + " ページ (" + SITE_VER + ")");
-  }
-  if (!onlyGames || !onlyGames.length) {
-    props.setProperty(PUB_PROGRESS_KEY, partial ? String(i) : "0");
-  }
-
-  const secs = Math.round((Date.now() - started) / 1000);
-  const msg = "書き出しました: " + files.length + " ページ / コミット " + sha + "（" + secs + "秒）" +
-    (partial ? "\n\n※ 途中で時間切れになりました（" + i + " / " + targets.length +
-               " ページ）。もう一度 publishSite を実行すると続きから進みます。"
-             : "\n\n全ページの書き出しが終わりました（" + targets.length + " ページ）。") +
-    (failed.length ? "\n\n作れなかったページ:\n  " + failed.join("\n  ") : "") +
-    "\n※ GitHub Pages に反映されるまで20〜60秒ほどかかります。";
+  const targets = [
+    { q: "", label: "試合一覧", make: function () { return renderIndex(); } },
+    { q: "season=", label: "試合一覧", make: function () { return renderIndex(); } }
+  ];
+  onlyGames.forEach(function (n) {
+    targets.push({ q: "view=game&sheet=" + encodeURIComponent(n), label: "試合 " + n,
+                   make: function () { return renderGame(n); } });
+  });
+  const r = withRenderMemo_(function () { return renderChunk_(targets, 0, started); });
+  const shas = commitBatched_(r.files, "試合を書き出し");
+  const msg = "書き出しました: " + r.files.length + " ページ / コミット " + (shas.join(", ") || "-") +
+    (r.failed.length ? "\n作れなかったページ:\n  " + r.failed.join("\n  ") : "");
   Logger.log(msg);
   return msg;
 }
 
-// ---- 変わったページを自動で書き出し直す ----
-//
-// 試合を保存すると、その試合ページと一覧はその場で書き出される。しかし成績や
-// 選手ページも中身が変わっているのに、保存の中で全部（約230ページ）を書き出すと
-// 3分半でも終わらず、試合中の記録操作が止まってしまう。
-// そこで保存時は「書き出しが要る」という印を付けるだけにして、トリガーが
-// 数分おきに続きを進める。publishSite は途中から再開できるので、何回かに分けて
-// 一周し、終わったら印を消す。
-const PUB_DIRTY_KEY = "pubDirty";
-
-/** 「サイトの作り置きが古くなった」と記録する */
-function markSiteDirty_() {
-  try { PropertiesService.getScriptProperties().setProperty(PUB_DIRTY_KEY, "1"); } catch (e) {}
-}
-
-/** トリガーから呼ばれる。印が付いているときだけ、続きを書き出す */
-function publishPending() {
-  const props = PropertiesService.getScriptProperties();
-  const dirty = !!props.getProperty(PUB_DIRTY_KEY);
-  // 今シーズンに書き出すものが無いときは、空いた回で過去シーズンを進める
-  if (!dirty && !archivePending_()) return "書き出すものはありません";
-  if (!ghToken()) return "GITHUB_TOKEN が未設定です";
-
+/** 書き出しは同時に1つだけ（トリガーと手動実行が重ならないように） */
+function runPublishLocked_() {
   // ensureReview が使うのはスクリプトロックなので、ここでは別のロックを使う
   const lock = LockService.getUserLock();
   if (!lock.tryLock(5000)) return "前回の書き出しがまだ動いています";
-  try {
-    // 試合の直後は今シーズンを優先する。1回の実行時間（6分）に両方は収まらない
-    if (!dirty) return publishArchive();
-    // 戦評は書き出し中は作らない決まりだが、それだとサイトが静的配信になった今
-    // 作られる機会が二度と来ない。1回につき少しだけ作ることを許す
-    _reviewBudget = 2;
-    const msg = publishSite();
-    _reviewBudget = 0;
-    // 一周すると publishSite が進み具合を 0 に戻す。そうなったら印を消す
-    if ((props.getProperty(PUB_PROGRESS_KEY) || "0") === "0") {
-      props.deleteProperty(PUB_DIRTY_KEY);
-    }
-    return msg;
-  } finally {
-    _reviewBudget = 0;
-    lock.releaseLock();
-  }
+  try { return runPublishJobs_(); } finally { lock.releaseLock(); }
+}
+
+/** トリガーから呼ばれる。古くなったページ・まだ作っていないページがあれば進める */
+function publishPending() {
+  return runPublishLocked_();
 }
 
 /** 数分おきの自動書き出しを仕掛ける（1回実行すればよい） */
@@ -3343,12 +3456,35 @@ function removePublishTrigger() {
 
 /**
  * スプレッドシートを直接いじったあとに実行する。
- * 次の自動書き出しで、全ページを最初から作り直させる
+ * 次の自動書き出しから、全ページ（過去シーズンも含む）を作り直させる
  */
 function publishAllSoon() {
-  publishReset();
-  markSiteDirty_();
-  return "次の自動書き出し（5分以内）で全ページを作り直します";
+  const props = PropertiesService.getScriptProperties();
+  props.deleteProperty(PUB_DONE_KEY);
+  props.deleteProperty(PUB_CUR_KEY);
+  props.deleteProperty(PUB_PAST_PLAYERS_KEY);
+  return "次の自動書き出し（5分以内）から全ページを作り直します。全部終わるまで数回ぶんかかります";
+}
+
+/** 以前の名前。publishAllSoon と同じ */
+function publishReset() { return publishAllSoon(); }
+
+/** 何がどれだけ残っているかを見る（書き出さない） */
+function publishDryRun() {
+  const done = readJsonProp_(PUB_DONE_KEY, {});
+  const dirty = readJsonProp_(PUB_DIRTY_KEY, {});
+  let total = 0;
+  const lines = withRenderMemo_(function () {
+    return pubJobs_().map(function (j) {
+      const n = j.targets().length;
+      total += n;
+      const st = dirty[j.key] ? "古くなった" : (done[j.key] === PUB_VER ? "済み" : "未作成");
+      return "  " + j.label + ": " + n + " ページ（" + st + "）";
+    });
+  });
+  const msg = "書き出し対象: 全 " + total + " ページ\n" + lines.join("\n");
+  Logger.log(msg);
+  return msg;
 }
 
 /** 1試合だけ（＋試合一覧）を書き出す。試合保存後や修正後に使う。 */
@@ -3387,12 +3523,6 @@ function publishMusic() {
   } catch (e) {
     return "登場曲ページの書き出しに失敗しました: " + e;
   }
-}
-
-/** 書き出しの進み具合をリセットして、次回は最初から書き出す */
-function publishReset() {
-  PropertiesService.getScriptProperties().deleteProperty(PUB_PROGRESS_KEY);
-  return "次回の publishSite は最初から書き出します";
 }
 
 /** 設定の確認。トークンで実際にGitHubへ接続して、書き込めるかまで見る */
@@ -4062,7 +4192,14 @@ const STATSONLY_PERIOD = "__statsonly__"; // 成績のみの年度（試合デ�
 // 期間セレクタ（シーズンと期間を1つにまとめた選択肢）。上から順に:
 //   今シーズン通算 → 今シーズンn月 → 全シーズン通算 → 過去シーズン（各シーズン通算のみ）
 // 値: "" = 今シーズン通算 / 月間シート名 / CAREER_PERIOD / "s:<シーズンID>"
+var _periodOptsMemo = null;   // 書き出し中だけ使う
 function periodOptions() {
+  if (_rowsMemo && _periodOptsMemo) return _periodOptsMemo;
+  const out = periodOptionsRaw_();
+  if (_rowsMemo) _periodOptsMemo = out;
+  return out;
+}
+function periodOptionsRaw_() {
   const out = [{ value: "", label: "今シーズン通算" }];
   // 今シーズンの月間（現行スプレッドシートから）
   bookById(currentSeasonId()).getSheets().forEach(function (s) {
@@ -4647,31 +4784,13 @@ function renderStats(type, statId, period) {
   // 指定が無い（または期間を変えて種目が入れ替わった）ときの既定は打率／防御率。
   // 成績シートの並び順そのままだと先頭が「出場」「登坂」になってしまうため。
   const fallback = isBat ? "打率" : "防御率";
-  const def = defs.filter(d => d.id === statId)[0] ||
+  const def0 = defs.filter(d => d.id === statId)[0] ||
     defs.filter(d => d.label === fallback)[0] || defs[0];
   const subLabel = isBat ? "打席" : "投球回";
 
-  // 対象者の抽出（率系は規定ライン以上のみ）
-  const list = [];
-  if (useSheet) {
-    const nameCol = isBat ? 0 : src.split;
-    const qc = qualColOf(src, isBat);
-    // ここは必ず各シーズン（通算は成績シートが無いので下の分岐に行く）。規定で絞らない
-    const minQ = 0;
-    for (let r = 1; r < src.values.length; r++) {
-      const nm = normName(src.values[r][nameCol]);
-      if (!nm) continue;
-      const q = qc >= 0 ? statNum(src.values[r][qc]) : null;
-      if (def.rate && qc >= 0 && (q === null || q < minQ)) continue;
-      const v = statNum(src.values[r][def.col]);
-      if (v === null) continue;
-      list.push({ name: nm, v: v,
-        disp: sheetDisp(src, r, def.col, def.label),
-        sub: q === null ? "-" : sheetDisp(src, r, qc, subLabel) });
-    }
-  } else {
-    // 通算: 試合記録から集計する（種目は従来の基本指標のみ）
-    let data;
+  // 成績シートが無い期間の集計は、種目に関係なく1回だけ行う
+  let data = null;
+  if (!useSheet) {
     if (isCareer) {
       data = isBat ? careerBatData() : careerPitData();
     } else if (rp.statsOnly) {
@@ -4681,29 +4800,69 @@ function renderStats(type, statId, period) {
       data = isBat ? batAllFrom(rowsOf(rp.sheet)) : pitAllFrom(rowsOf(rp.sheet), rp.sheet);
     }
     if (isBat) attachWrcPlus(data); // WRC+ はリーグ全体から算出するため事前に付与
-    Object.keys(data).forEach(nm => {
-      const d = data[nm];
-      if (def.rate) {
-        // 絞り込むのは全シーズン通算のときだけ。各シーズンは全員を載せる
-        if (isCareer && isBat && d.pa < CAREER_MIN_PA) return;
-        if (isCareer && !isBat && d.outs < CAREER_MIN_OUTS) return;
-      }
-      const v = def.val(d);
-      if (v === null || v === undefined || isNaN(v) && v !== Infinity) return;
-      list.push({ name: nm, v: v, disp: def.fmt ? def.fmt(v) : String(v),
-        sub: isBat ? String(d.pa) : ipStr(d.outs) });
-    });
   }
-  list.sort((a, b) => def.asc ? a.v - b.v : b.v - a.v);
 
-  // セレクタ（変更で即再読み込み）
-  function sel(name, opts, current) {
-    // 打者⇔投手を切り替えたときは種目を送らない。打者の種目IDを投手側に持ち込んでも
-    // 防御率に戻るだけで、組み合わせが増えると書き出しきれず毎回GASに行ってしまうため
-    const go = name === "type"
-      ? "if(this.form.stat)this.form.stat.disabled=true;this.form.submit()"
-      : "this.form.submit()";
-    let s = '<select name="' + name + '" onchange="' + go + '">';
+  // 全種目の順位表を1ページに入れ、種目の切り替えはブラウザの中で行う。
+  // 種目ごとに別ページにすると、期間×打者投手×種目で数百ページになり、試合のたびに
+  // 全シーズン通算や月間まで作り直すと書き出しが追いつかない。種目を変えるたびに
+  // 読み込みが走ることも無くなる。選手名は何度も出るので一覧にして番号で引く
+  const players = [], pIndex = {};
+  function pid(nm) {
+    if (!(nm in pIndex)) {
+      pIndex[nm] = players.length;
+      players.push([url + '?view=player&name=' + encodeURIComponent(nm) + seasonQ(), displayName(nm)]);
+    }
+    return pIndex[nm];
+  }
+
+  /** 1種目ぶんの順位表。[選手番号, 順位, 値の表示, 打席or投球回] の並び（同値は同順位） */
+  function rankRows(def) {
+    const list = [];
+    if (useSheet) {
+      const nameCol = isBat ? 0 : src.split;
+      const qc = qualColOf(src, isBat);
+      for (let r = 1; r < src.values.length; r++) {
+        const nm = normName(src.values[r][nameCol]);
+        if (!nm) continue;
+        const q = qc >= 0 ? statNum(src.values[r][qc]) : null;
+        // 各シーズンは規定で絞らない。打席・投球回が空の人だけ外す
+        if (def.rate && qc >= 0 && q === null) continue;
+        const v = statNum(src.values[r][def.col]);
+        if (v === null) continue;
+        list.push({ name: nm, v: v,
+          disp: sheetDisp(src, r, def.col, def.label),
+          sub: q === null ? "-" : sheetDisp(src, r, qc, subLabel) });
+      }
+    } else {
+      Object.keys(data).forEach(nm => {
+        const d = data[nm];
+        if (def.rate) {
+          // 絞り込むのは全シーズン通算のときだけ。各シーズンは全員を載せる
+          if (isCareer && isBat && d.pa < CAREER_MIN_PA) return;
+          if (isCareer && !isBat && d.outs < CAREER_MIN_OUTS) return;
+        }
+        const v = def.val(d);
+        if (v === null || v === undefined || isNaN(v) && v !== Infinity) return;
+        list.push({ name: nm, v: v, disp: def.fmt ? def.fmt(v) : String(v),
+          sub: isBat ? String(d.pa) : ipStr(d.outs) });
+      });
+    }
+    list.sort((a, b) => def.asc ? a.v - b.v : b.v - a.v);
+    const rows = [];
+    let rank = 0, shown = 0, prev = null;
+    list.forEach(e => {
+      shown++;
+      if (prev === null || e.v !== prev) rank = shown;
+      prev = e.v;
+      rows.push([pid(e.name), rank, e.disp, e.sub]);
+    });
+    return rows;
+  }
+  const all = defs.map(d => ({ id: d.id, label: d.label, rate: !!d.rate, rows: rankRows(d) }));
+  const i0 = Math.max(0, defs.indexOf(def0));
+
+  function sel(name, opts, current, extra) {
+    let s = '<select' + (name ? ' name="' + name + '"' : '') + (extra || '') + '>';
     opts.forEach(o => {
       // 種目の値は成績シートの見出しから作るのでエスケープする
       s += '<option value="' + esc(o.value).replace(/"/g, "&quot;") + '"' +
@@ -4711,40 +4870,87 @@ function renderStats(type, statId, period) {
     });
     return s + '</select>';
   }
+  const careerNote = !isCareer ? '' : isBat
+    ? '全シーズン通算は ' + CAREER_MIN_PA + '打席以上の選手を載せています'
+    : '全シーズン通算は ' + ipStr(CAREER_MIN_OUTS) + '回以上投げた投手を載せています';
+
   let body = '<div class="top"><a target="_top" href="' + url + '?' + seasonParam() + '">‹ 試合一覧</a></div>' +
     '<h1>個人成績ランキング</h1>' +
     '<form method="get" action="' + url + '" target="_top" class="selrow">' +
     '<input type="hidden" name="view" value="stats">' +
-    sel("type", [{ value: "bat", label: "打者成績" }, { value: "pit", label: "投手成績" }], isBat ? "bat" : "pit") +
+    sel("type", [{ value: "bat", label: "打者成績" }, { value: "pit", label: "投手成績" }], isBat ? "bat" : "pit",
+      ' onchange="this.form.submit()"') +
     periodSelectHtml(period) +
-    sel("stat", defs.map(d => ({ value: d.id, label: d.label })), def.id) +
+    // 種目には name を付けない＝送信されない。切り替えはページ内のスクリプトで行う
+    sel("", defs.map(d => ({ value: d.id, label: d.label })), def0.id, ' id="ppStat"') +
     '</form>';
 
-  // ランキング表（同値は同順位）
-  let t = '<div class="tbl"><table class="st"><tr><th style="width:3em">順位</th>' +
-    '<th class="name">選手名</th><th>' + esc(def.label) + '</th>' +
-    '<th>' + esc(subLabel) + '</th></tr>';
-  let rank = 0, shown = 0, prev = null;
-  list.forEach(e => {
-    shown++;
-    if (prev === null || e.v !== prev) rank = shown;
-    prev = e.v;
-    t += '<tr><td>' + rank + '</td><td class="name">' + plink(url, e.name) + '</td>' +
-      '<td><b>' + esc(e.disp) + '</b></td><td>' + esc(e.sub) + '</td></tr>';
+  // 最初の表はサーバーで描いておく（スクリプトが動かなくても見える）
+  const first = all[i0];
+  let t = '<div class="tbl" id="ppRank"><table class="st"><tr><th style="width:3em">順位</th>' +
+    '<th class="name">選手名</th><th>' + esc(first.label) + '</th><th>' + esc(subLabel) + '</th></tr>';
+  first.rows.forEach(r => {
+    const pl = players[r[0]];
+    t += '<tr><td>' + r[1] + '</td><td class="name"><a target="_top" href="' + pl[0] + '">' + esc(pl[1]) + '</a></td>' +
+      '<td><b>' + esc(r[2]) + '</b></td><td>' + esc(r[3]) + '</td></tr>';
   });
-  if (list.length === 0) t += '<tr><td colspan="4">対象者がいません</td></tr>';
-  t += '</table></div>';
-  body += t;
-  const notes = [];
-  // 全シーズン通算だけは載せる人を絞っているので、そのことは書いておく
-  if (def.rate && isCareer) {
-    notes.push(isBat ? '全シーズン通算は ' + CAREER_MIN_PA + '打席以上の選手を載せています'
-      : '全シーズン通算は ' + ipStr(CAREER_MIN_OUTS) + '回以上投げた投手を載せています');
-  }
-  if (!useSheet && isCareer) notes.push('全シーズン通算は試合記録からの集計のため、種目は基本指標のみです');
-  notes.forEach(function (n) { body += '<p class="sub">※ ' + esc(n) + '</p>'; });
+  if (first.rows.length === 0) t += '<tr><td colspan="4">対象者がいません</td></tr>';
+  body += t + '</table></div>';
+  body += '<div id="ppNote">' + (careerNote && first.rate ? '<p class="sub">※ ' + esc(careerNote) + '</p>' : '') + '</div>';
+  if (!useSheet && isCareer) body += '<p class="sub">※ 全シーズン通算は試合記録からの集計のため、種目は基本指標のみです</p>';
   body += kiteiBoxHtml(rp);   // サークルの決まり。ページの一番下に置く
+
+  // < を逃がしておかないと、選手名などに </script> が含まれたときにページが壊れる
+  const js = function (v) { return JSON.stringify(v).replace(/</g, '\\u003c'); };
+  body += '<script>(' + statsSwitch_.toString() + ')(' +
+    [js(players), js(all), js(subLabel), js(careerNote), js(isBat ? "bat" : "pit")].join(',') + ');</script>';
   return page("個人成績", body, false);
+}
+
+/**
+ * 成績ページの種目切り替え。この関数はサーバーでは実行せず、ソースをページに埋めて
+ * ブラウザで動かす（古い端末でも動くよう ES5 で書く）。
+ * 期間や打者⇔投手を変えるとページが変わるので、選んでいた種目は sessionStorage に
+ * 覚えておき、次のページでも同じ種目を出す。URL の stat= は古いリンクやGAS直のとき用
+ */
+function statsSwitch_(P, S, SUB, CN, TY) {
+  function e(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    });
+  }
+  var sel = document.getElementById("ppStat");
+  if (!sel) return;
+  function draw(i) {
+    var d = S[i];
+    var h = '<table class="st"><tr><th style="width:3em">順位</th><th class="name">選手名</th><th>' +
+      e(d.label) + '</th><th>' + e(SUB) + '</th></tr>';
+    for (var k = 0; k < d.rows.length; k++) {
+      var r = d.rows[k], p = P[r[0]];
+      h += '<tr><td>' + r[1] + '</td><td class="name"><a target="_top" href="' + e(p[0]) + '">' + e(p[1]) +
+        '</a></td><td><b>' + e(r[2]) + '</b></td><td>' + e(r[3]) + '</td></tr>';
+    }
+    if (!d.rows.length) h += '<tr><td colspan="4">対象者がいません</td></tr>';
+    document.getElementById("ppRank").innerHTML = h + '</table>';
+    document.getElementById("ppNote").innerHTML = (CN && d.rate) ? '<p class="sub">※ ' + e(CN) + '</p>' : '';
+    sel.selectedIndex = i;
+  }
+  function find(id) {
+    for (var i = 0; i < S.length; i++) if (S[i].id === id) return i;
+    return -1;
+  }
+  var want = null;
+  try {
+    var m = /[?&]stat=([^&]*)/.exec(location.search);
+    if (m) want = decodeURIComponent(m[1].replace(/\+/g, " "));
+  } catch (x) {}
+  if (want === null) { try { want = sessionStorage.getItem("ppStat:" + TY); } catch (x) {} }
+  var i = want === null ? -1 : find(want);
+  if (i >= 0 && i !== sel.selectedIndex) draw(i);
+  sel.onchange = function () {
+    draw(sel.selectedIndex);
+    try { sessionStorage.setItem("ppStat:" + TY, S[sel.selectedIndex].id); } catch (x) {}
+  };
 }
 
 function page(title, body, autoRefresh) {
@@ -4857,6 +5063,50 @@ function page(title, body, autoRefresh) {
     '</body></html>';
 }
 
+/** 試合中の枠のカード。試合一覧に出すのと、サイト側から聞き直されたときに返すのと共通 */
+function liveCardsHtml_(url) {
+  let html = "", count = 0;
+  for (let slot = 1; slot <= LIVE_SLOTS; slot++) {
+    const meta = liveMeta(slot);
+    const shName = liveSheetName(slot);
+    // 一度も使っていない枠のシートは存在しないので、無駄な問い合わせを省く
+    if (!meta && sheetNamesOf().indexOf(shName) < 0) continue;
+    const liveRows = rowsOf(shName);
+    if (!meta && liveRows.length === 0) continue;
+    count++;
+    const l = lineScore(liveRows);
+    const d = liveRows[0] ? liveRows[0].date : (meta ? meta.date : "");
+    const st = liveRows[0] ? liveRows[0].stadium : (meta ? meta.stadium : "");
+    // 同じ日・同じ球場で複数試合が並ぶので、打者が出てきたらチーム名で見分けられるようにする
+    const tn = liveRows.length ? teamNames(liveRows) : null;
+    const score = tn ? (esc(tn.f) + ' ' + l.scoreF + ' - ' + l.scoreS + ' ' + esc(tn.s))
+      : ('先攻 ' + l.scoreF + ' - ' + l.scoreS + ' 後攻');
+    html += '<a class="card live" target="_top" href="' + url + '?view=game&sheet=' + shName + '">' +
+      '<div class="d"><span class="dot"></span>試合中　' + esc(d) + '　' + esc(st) + '</div>' +
+      '<div class="s">' + score + '</div></a>';
+  }
+  return { html: html, count: count };
+}
+
+/**
+ * ブラウザで動く（サーバーでは実行しない）。試合中の枠をGASに聞いて差し替え、
+ * 開いている間は1分ごとに聞き直す。GAS_URL はラッパー（site/index.html）が持っている。
+ * GASのページを直接開いたときは GAS_URL が無く、最初から最新なので何もしない
+ */
+function liveRefresh_() {
+  if (typeof GAS_URL === "undefined" || !window.fetch) return;
+  function load() {
+    fetch(GAS_URL + "?action=live").then(function (r) { return r.json(); }).then(function (j) {
+      var box = document.getElementById("ppLive");
+      if (box && j && typeof j.html === "string") box.innerHTML = j.html;
+    }).catch(function () {});
+  }
+  // ラッパーは先に手元の控えを出してから最新に差し替えるので、2回走ることがある
+  if (window.__ppLiveTimer) clearInterval(window.__ppLiveTimer);
+  load();
+  window.__ppLiveTimer = setInterval(load, 60000);
+}
+
 function renderIndex() {
   const url = siteUrl();
   // 試合一覧に出すのは試合データを持つシーズンのみ（成績のみの年度は通算専用）
@@ -4895,26 +5145,13 @@ function renderIndex() {
   }
 
   // 試合中（速報枠1〜LIVE_SLOTS を全部並べる）。アーカイブ（過去シーズン）表示中は出さない
-  let liveCount = 0;
-  for (let slot = 1; !_seasonId && slot <= LIVE_SLOTS; slot++) {
-    const meta = liveMeta(slot);
-    const shName = liveSheetName(slot);
-    // 一度も使っていない枠のシートは存在しないので、無駄な問い合わせを省く
-    if (!meta && sheetNamesOf().indexOf(shName) < 0) continue;
-    const liveRows = rowsOf(shName);
-    if (!meta && liveRows.length === 0) continue;
-    liveCount++;
-    const l = lineScore(liveRows);
-    const d = liveRows[0] ? liveRows[0].date : (meta ? meta.date : "");
-    const st = liveRows[0] ? liveRows[0].stadium : (meta ? meta.stadium : "");
-    // 同じ日・同じ球場で複数試合が並ぶので、打者が出てきたらチーム名で見分けられるようにする
-    const tn = liveRows.length ? teamNames(liveRows) : null;
-    const score = tn ? (esc(tn.f) + ' ' + l.scoreF + ' - ' + l.scoreS + ' ' + esc(tn.s))
-      : ('先攻 ' + l.scoreF + ' - ' + l.scoreS + ' 後攻');
-    body += '<a class="card live" target="_top" href="' + url + '?view=game&sheet=' + liveSheetName(slot) + '">' +
-      '<div class="d"><span class="dot"></span>試合中　' + esc(d) + '　' + esc(st) + '</div>' +
-      '<div class="s">' + score + '</div></a>';
-  }
+  const live = _seasonId ? { html: "", count: 0 } : liveCardsHtml_(url);
+  const liveCount = live.count;
+  body += '<div id="ppLive">' + live.html + '</div>';
+  // 試合一覧は書き出したページを配っているので、ここで描いた「試合中」は書き出した時点の
+  // まま止まる（試合が始まっても一覧に出ない）。サイト経由で開いたときは、試合中の枠だけ
+  // GASに聞き直して差し替える
+  if (!_seasonId) body += '<script>(' + liveRefresh_.toString() + ')();</script>';
 
   const names = gameSheetNames().reverse();
   if (names.length === 0 && !liveCount) body += '<p class="sub">まだ試合がありません。</p>';
