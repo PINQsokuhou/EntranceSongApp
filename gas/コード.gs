@@ -40,7 +40,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v84";
+const SITE_VER = "site v85";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -3055,13 +3055,13 @@ function withRenderMemo_(fn) {
  * 各ページは tg.season のシーズンを選んだ状態で作る（無ければ今シーズン）。
  */
 function renderChunk_(targets, from, started) {
-  const files = [], failed = [];
+  const files = [], failed = [], times = [];
   let i = from, partial = false;
   _noGenerateReview = true; // まとめ書き出し中はGeminiを呼ばない（_reviewBudget の分だけ例外）
   try {
     for (; i < targets.length; i++) {
       if (Date.now() - started > PUB_BUDGET_MS) { partial = true; break; }
-      const tg = targets[i];
+      const tg = targets[i], t1 = Date.now();
       try {
         const html = rawHtml(withSeason_(tg.season || "", tg.make));
         // 中身が同じでURLだけ違うページ（also）は、作るのは1回で、置き場所を増やす
@@ -3071,24 +3071,25 @@ function renderChunk_(targets, from, started) {
       } catch (e) {
         failed.push(tg.label + "（" + e + "）");
       }
+      times.push([tg.label, Date.now() - t1]);
     }
   } finally {
     _noGenerateReview = false;
   }
-  return { files: files, failed: failed, next: i, partial: partial };
+  return { files: files, failed: failed, next: i, partial: partial, times: times };
 }
 
 /**
  * 1回のコミットに入れる中身を抑えて、何回かに分けて書く。
  * 成績ページは全種目を1ページに入れたぶん大きいので、まとめすぎると送りきれない
  */
-function commitBatched_(files, label) {
+function commitBatched_(files, label, note) {
   const LIMIT = 2 * 1024 * 1024;   // バイト（日本語はUTF-8で1文字3バイトとして見積もる）
   const shas = [];
   let batch = [], size = 0;
   function flush() {
     if (!batch.length) return;
-    shas.push(ghCommit_(batch, label + ": " + batch.length + " ページ (" + SITE_VER + ")"));
+    shas.push(ghCommit_(batch, label + ": " + batch.length + " ページ (" + SITE_VER + ")" + (note ? "\n\n" + note : "")));
     batch = []; size = 0;
   }
   files.forEach(function (f) {
@@ -3331,18 +3332,22 @@ function runPublishJobs_() {
     const need = pubJobs_().filter(function (j) { return done[j.key] !== PUB_VER || dirty[j.key]; });
     need.sort(function (a, b) { return (dirty[a.key] ? 0 : 1) - (dirty[b.key] ? 0 : 1); });
 
-    const files = [], failed = [], finished = [], log = [];
+    const files = [], failed = [], finished = [], log = [], times = [];
+    const prepMs = Date.now() - started;
     let partialAt = null;
     for (let k = 0; k < need.length; k++) {
       const j = need[k], stamp = dirty[j.key] || "";
+      const tj = Date.now();
       const targets = j.targets();
+      const listMs = Date.now() - tj;
       // 前回の途中から。ただし途中で印が付け直されていたら（＝中身が変わった）最初から
       let from = (cur[0] === j.key && (cur[2] || "") === stamp) ? (parseInt(cur[1], 10) || 0) : 0;
       if (from >= targets.length) from = 0;
       const r = renderChunk_(targets, from, started);
       files.push.apply(files, r.files);
       failed.push.apply(failed, r.failed);
-      log.push(j.label + " " + r.next + "/" + targets.length);
+      times.push.apply(times, r.times);
+      log.push(j.label + " " + r.next + "/" + targets.length + "（一覧作り " + Math.round(listMs / 1000) + "秒）");
       if (r.partial) { partialAt = j.key + "#" + r.next + "#" + stamp; break; }
       finished.push({ key: j.key, stamp: stamp });
     }
@@ -3362,7 +3367,15 @@ function runPublishJobs_() {
     }
 
     if (!files.length && !finished.length && !reviewed.length) return "書き出すものはありません";
-    const shas = commitBatched_(files, "サイト静的書き出し");
+    // どこに時間がかかったかをコミットに残す（GitHubの履歴を見るだけで遅い所が分かるように）
+    const renderMs = times.reduce(function (a, x) { return a + x[1]; }, 0);
+    const slow = times.slice().sort(function (a, b) { return b[1] - a[1]; }).slice(0, 3)
+      .map(function (x) { return x[0] + " " + (x[1] / 1000).toFixed(1) + "秒"; });
+    const note = "所要: 準備 " + Math.round(prepMs / 1000) + "秒 / ページ作成 " + times.length + "回 " +
+      Math.round(renderMs / 1000) + "秒（平均 " + (times.length ? (renderMs / times.length / 1000).toFixed(1) : "-") +
+      "秒）/ 全体 " + Math.round((Date.now() - started) / 1000) + "秒\n" + log.join("\n") +
+      (slow.length ? "\n遅い順: " + slow.join(", ") : "");
+    const shas = commitBatched_(files, "サイト静的書き出し", note);
 
     // 書き込めてから「済み」にする（途中で失敗したら次回やり直す）
     finished.forEach(function (f) { done[f.key] = PUB_VER; });
@@ -4660,7 +4673,10 @@ function renderPlayer(nameRaw, period) {
   const seiseki = isCareer ? null
     : (isStatsOnly ? statsOnlySheetOf(rp.seasonId) : seisekiSheetFor(rp.sheet));
   if (seiseki) {
-    const sv = seiseki.getDataRange().getValues();
+    // 成績シートは同じ実行の中では1回だけ読む（書き出しで選手ページを何十枚も作るとき、
+    // 1枚ごとに116列の表を読み直していた）
+    const src0 = seisekiRankSource(seiseki);
+    const sv = src0 ? src0.values : seiseki.getDataRange().getValues();
     const headers = sv[0];
     let prow = null;
     // 成績シート側もフルネーム等の表記ゆれがあるので正規化して突き合わせる
