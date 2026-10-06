@@ -51,6 +51,14 @@ GASは1リクエストに1.3〜6秒かかる（スプレッドシートの読み
   一周したら印を消す。`saveGame` は印を付けるだけ（保存の中で230ページは書き出せない）
   - 仕掛ける/止める: `installPublishTrigger()` / `removePublishTrigger()`
 - `publishAllSoon()` … スプシを直接いじったあとに実行。次の自動書き出しで全ページを作り直す
+- `publishArchive()` … **過去シーズン**の成績・選手ページ。中身はもう変わらないので一度だけ作り、
+  終わったら「どのシーズンを作ったか」を控えて以後は何もしない。`publishPending` が、
+  今シーズンに書き出すものが無い回に自動で進める（試合直後は今シーズンを優先）
+  - **`renderStats` / `renderPlayer` の見た目を変えたら `ARCHIVE_VER` を上げること。**
+    上げないと過去シーズンのページだけ古い見た目のまま残る（作り直さない設計のため）
+  - `publishArchiveDryRun()` で件数確認、`publishArchiveReset()` で作り直し
+- 打者⇔投手の切り替えでは種目を送らない（`stat` を disabled にして送信）。送ると
+  `type=pit&stat=打率` のような組み合わせが爆発して書き出しきれず、毎回GASに行っていた
 - `publishStatus()` … トークンと接続の確認
 - 書き込みは GitHub の **Git Data API**（ref → commit → tree → commit → PATCH ref の5リクエスト。ファイル数に依らない）
 - `GITHUB_TOKEN` をスクリプトプロパティに置く（fine-grained / Contents: Read and write）

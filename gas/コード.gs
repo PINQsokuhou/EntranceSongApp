@@ -40,7 +40,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v82";
+const SITE_VER = "site v83";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -1113,10 +1113,12 @@ function gameSheetNames() {
 
 // 全試合経過は数千行あるので、1回の実行の中では読み直さない。
 // 試合ページを何十枚もまとめて書き出すとき（publishSite）に効く。
-var _allRowsMemo = null;
+// シーズンごとに分けて持つ（1回の実行で過去シーズンのページも作るため、混ざらないように）
+var _allRowsMemo = {};
 function allGameRows() {
-  if (!_allRowsMemo) _allRowsMemo = rowsOf(ALL_GAMES);
-  return _allRowsMemo;
+  const k = activeSeasonId();
+  if (!_allRowsMemo[k]) _allRowsMemo[k] = rowsOf(ALL_GAMES);
+  return _allRowsMemo[k];
 }
 
 function rowsOf(name, book) {
@@ -3016,6 +3018,11 @@ function publishTargets_() {
   // 成績（今シーズン通算）。リンクから来る素の ?view=stats と、種目を選んだ後の形の両方
   t.push({ q: "view=stats", label: "成績（既定）", make: function () { return renderStats("bat", "", ""); } });
   ["bat", "pit"].forEach(function (ty) {
+    // 打者⇔投手を切り替えた直後の形（種目は送られてこない）
+    t.push({ q: "view=stats&type=" + ty + "&period=", label: "成績 " + ty + "（切替）",
+             make: function () { return renderStats(ty, "", ""); } });
+  });
+  ["bat", "pit"].forEach(function (ty) {
     statDefsForDefault_(ty === "bat").forEach(function (d) {
       t.push({
         q: "view=stats&type=" + ty + "&period=&stat=" + encodeURIComponent(d.id),
@@ -3057,6 +3064,178 @@ const PUB_PROGRESS_KEY = "pubIdx";
  * 6分の実行上限に収まらない場合は途中で止め、次に実行したとき続きから進む。
  * onlyGames に試合シート名の配列を渡すと、その試合と試合一覧だけを書き出す。
  */
+/** 一時的に別シーズンを選んだ状態にして fn を実行する（ss() や選手リンクがそのシーズンを向く） */
+function withSeason_(id, fn) {
+  const prev = _seasonId;
+  _seasonId = id || "";
+  try { return fn(); } finally { _seasonId = prev; }
+}
+
+/**
+ * targets を from から順に作り、時間内に作れたぶんを返す。
+ * 各ページは tg.season のシーズンを選んだ状態で作る（無ければ今シーズン）。
+ */
+function renderChunk_(targets, from, started) {
+  const files = [], failed = [];
+  let i = from, partial = false;
+  _noGenerateReview = true; // まとめ書き出し中はGeminiを呼ばない
+  try {
+    for (; i < targets.length; i++) {
+      if (Date.now() - started > 3.5 * 60 * 1000) { partial = true; break; }
+      const tg = targets[i];
+      try {
+        const html = withSeason_(tg.season || "", tg.make);
+        files.push({ path: "p/" + queryKey_(tg.q) + ".html", content: rawHtml(html) });
+      } catch (e) {
+        failed.push(tg.label + "（" + e + "）");
+      }
+    }
+  } finally {
+    _noGenerateReview = false;
+  }
+  return { files: files, failed: failed, next: i, partial: partial };
+}
+
+// ---- 過去シーズンの書き出し ----
+//
+// 過去シーズンの成績はもう変わらないので、一度書き出せば作り直す必要がない。
+// これまでは今シーズンしか書き出しておらず、期間で過去シーズンを選ぶと毎回GASが
+// そのシーズンのスプレッドシートを開きに行っていた（数秒かかる）。
+//
+// 一周し終えたら「どのシーズンを書き出したか」を控え、以後は何もしない。
+// シーズンが増えたとき（新シーズンに切り替えて前のシーズンが過去になったとき）や、
+// ARCHIVE_VER を上げたときだけ作り直す。
+const PUB_ARCHIVE_IDX = "pubArchiveIdx";
+const PUB_ARCHIVE_DONE = "pubArchiveDone";
+// 成績・選手ページの見た目を変えたら上げる。過去シーズンのページも新しい見た目で作り直す
+const ARCHIVE_VER = "1";
+
+function archiveSig_() {
+  return ARCHIVE_VER + "|" + seasonList().filter(function (s) { return !s.current; })
+    .map(function (s) { return s.id; }).join(",");
+}
+
+/** その期間の成績シートの種目（無ければ基本指標） */
+function statDefsForPeriod_(isBat, period) {
+  const rp = resolvePeriodValue(period);
+  const seiseki = rp.statsOnly ? statsOnlySheetOf(rp.seasonId) : seisekiSheetFor(rp.sheet);
+  const d = sheetRankDefs(seisekiRankSource(seiseki), isBat);
+  return d.length ? d : (isBat ? BAT_RANK : PIT_RANK);
+}
+
+/** 過去シーズンの書き出し対象 */
+function archiveTargets_() {
+  const past = seasonList().filter(function (s) { return !s.current; });
+  // 期間を切り替えると、今見ている種目のIDのまま送られてくる。どのシーズンから
+  // 来ても書き出し済みのページに当たるよう、全シーズンの種目IDを合わせて使う
+  const ids = { bat: {}, pit: {} };
+  function collect(sid, period) {
+    withSeason_(sid, function () {
+      ["bat", "pit"].forEach(function (ty) {
+        statDefsForPeriod_(ty === "bat", period).forEach(function (d) { ids[ty][d.id] = 1; });
+      });
+    });
+  }
+  collect("", "");
+  past.forEach(function (s) {
+    collect(s.statsSheet ? "" : s.id, (s.statsSheet ? "so:" : "s:") + s.id);
+  });
+
+  const t = [];
+  past.forEach(function (s) {
+    const so = !!s.statsSheet;
+    const period = (so ? "so:" : "s:") + s.id;
+    const sid = so ? "" : s.id;   // 成績のみの年度はシーズンを切り替えずに読む
+    const pq = "&period=" + encodeURIComponent(period);
+    ["bat", "pit"].forEach(function (ty) {
+      // 打者⇔投手を切り替えた直後の形（種目は送られてこない）
+      t.push({ q: "view=stats&type=" + ty + pq, season: sid, group: s.label, label: s.label + " 成績 " + ty,
+               make: function () { return renderStats(ty, "", period); } });
+      Object.keys(ids[ty]).forEach(function (id) {
+        t.push({ q: "view=stats&type=" + ty + pq + "&stat=" + encodeURIComponent(id), season: sid,
+                 group: s.label, label: s.label + " 成績 " + ty + " " + id,
+                 make: function () { return renderStats(ty, id, period); } });
+      });
+    });
+    // 選手ページ。過去シーズンの成績表から選手名をたどると ?season=ID 付きで来る
+    if (!so) {
+      withSeason_(sid, playerNamesForPublish_).forEach(function (nm) {
+        t.push({ q: "view=player&name=" + encodeURIComponent(nm) + "&season=" + encodeURIComponent(s.id),
+                 season: sid, group: s.label, label: s.label + " 選手 " + nm,
+                 make: function () { return renderPlayer(nm, ""); } });
+      });
+    }
+  });
+  return t;
+}
+
+/** 過去シーズンをまだ書き出し終えていなければ true */
+function archivePending_() {
+  return PropertiesService.getScriptProperties().getProperty(PUB_ARCHIVE_DONE) !== archiveSig_();
+}
+
+/**
+ * 過去シーズンの成績・選手ページを書き出す。3分半で区切り、次回は続きから。
+ * 自動書き出し（publishPending）が、今シーズンに書き出すものが無いときに進めるので、
+ * 普段は手で実行しなくてよい
+ */
+function publishArchive() {
+  if (!ghToken()) return "GITHUB_TOKEN が未設定です";
+  const u = siteUrl();
+  if (!u || u.indexOf("/exec") < 0) {
+    return "公開URLが未取得のため中止しました。一度サイトを開いてから再実行してください。";
+  }
+  const props = PropertiesService.getScriptProperties();
+  const sig = archiveSig_();
+  if (props.getProperty(PUB_ARCHIVE_DONE) === sig) return "過去シーズンは書き出し済みです";
+
+  const started = Date.now();
+  const targets = archiveTargets_();
+  // 進み具合は「どのシーズン構成での何件目か」で持つ。途中でシーズンが増えたら最初から
+  const saved = String(props.getProperty(PUB_ARCHIVE_IDX) || "");
+  let from = 0;
+  if (saved.indexOf(sig + "#") === 0) from = parseInt(saved.slice(sig.length + 1), 10) || 0;
+  if (from >= targets.length) from = 0;
+
+  const r = renderChunk_(targets, from, started);
+  let sha = "-";
+  if (r.files.length) {
+    sha = ghCommit_(r.files, "過去シーズンの書き出し: " + r.files.length + " ページ (" + SITE_VER + ")");
+  }
+  if (r.partial) {
+    props.setProperty(PUB_ARCHIVE_IDX, sig + "#" + r.next);
+  } else {
+    props.deleteProperty(PUB_ARCHIVE_IDX);
+    props.setProperty(PUB_ARCHIVE_DONE, sig);
+  }
+  const msg = "過去シーズン: " + r.files.length + " ページ書き出し / コミット " + sha +
+    "（" + r.next + " / " + targets.length + "）" +
+    (r.partial ? "\n※ 続きは次回の実行で進みます" : "\n過去シーズンの書き出しが終わりました") +
+    (r.failed.length ? "\n作れなかったページ:\n  " + r.failed.join("\n  ") : "");
+  Logger.log(msg);
+  return msg;
+}
+
+/** 過去シーズンを作り直させる（ページの見た目を変えたときなど） */
+function publishArchiveReset() {
+  const props = PropertiesService.getScriptProperties();
+  props.deleteProperty(PUB_ARCHIVE_IDX);
+  props.deleteProperty(PUB_ARCHIVE_DONE);
+  return "次の自動書き出しで、過去シーズンを最初から作り直します";
+}
+
+/** 何ページになるかだけ数える（書き出さない） */
+function publishArchiveDryRun() {
+  const t = archiveTargets_();
+  const by = {};
+  t.forEach(function (x) { by[x.group] = (by[x.group] || 0) + 1; });
+  const lines = ["過去シーズンの書き出し対象: " + t.length + " ページ"];
+  Object.keys(by).forEach(function (k) { lines.push("  " + k + ": " + by[k] + " ページ"); });
+  lines.push(archivePending_() ? "（まだ書き出していません）" : "（書き出し済み）");
+  Logger.log(lines.join("\n"));
+  return lines.join("\n");
+}
+
 function publishSite(onlyGames) {
   if (!ghToken()) return "GITHUB_TOKEN が未設定です。プロジェクトの設定 → スクリプト プロパティ に登録してください。";
   const u = siteUrl();
@@ -3079,22 +3258,9 @@ function publishSite(onlyGames) {
     if (from >= targets.length) from = 0; // 一周したので最初から
   }
 
-  const files = [], failed = [];
-  let i = from;
-  _noGenerateReview = true; // まとめ書き出し中はGeminiを呼ばない
-  try {
-    for (; i < targets.length; i++) {
-      if (Date.now() - started > 3.5 * 60 * 1000) { partial = true; break; }
-      const tg = targets[i];
-      try {
-        files.push({ path: "p/" + queryKey_(tg.q) + ".html", content: rawHtml(tg.make()) });
-      } catch (e) {
-        failed.push(tg.label + "（" + e + "）");
-      }
-    }
-  } finally {
-    _noGenerateReview = false;
-  }
+  const chunk = renderChunk_(targets, from, started);
+  const files = chunk.files, failed = chunk.failed, i = chunk.next;
+  partial = chunk.partial;
 
   let sha = "-";
   if (files.length) {
@@ -3133,13 +3299,17 @@ function markSiteDirty_() {
 /** トリガーから呼ばれる。印が付いているときだけ、続きを書き出す */
 function publishPending() {
   const props = PropertiesService.getScriptProperties();
-  if (!props.getProperty(PUB_DIRTY_KEY)) return "書き出すものはありません";
+  const dirty = !!props.getProperty(PUB_DIRTY_KEY);
+  // 今シーズンに書き出すものが無いときは、空いた回で過去シーズンを進める
+  if (!dirty && !archivePending_()) return "書き出すものはありません";
   if (!ghToken()) return "GITHUB_TOKEN が未設定です";
 
   // ensureReview が使うのはスクリプトロックなので、ここでは別のロックを使う
   const lock = LockService.getUserLock();
   if (!lock.tryLock(5000)) return "前回の書き出しがまだ動いています";
   try {
+    // 試合の直後は今シーズンを優先する。1回の実行時間（6分）に両方は収まらない
+    if (!dirty) return publishArchive();
     // 戦評は書き出し中は作らない決まりだが、それだとサイトが静的配信になった今
     // 作られる機会が二度と来ない。1回につき少しだけ作ることを許す
     _reviewBudget = 2;
@@ -4528,7 +4698,12 @@ function renderStats(type, statId, period) {
 
   // セレクタ（変更で即再読み込み）
   function sel(name, opts, current) {
-    let s = '<select name="' + name + '" onchange="this.form.submit()">';
+    // 打者⇔投手を切り替えたときは種目を送らない。打者の種目IDを投手側に持ち込んでも
+    // 防御率に戻るだけで、組み合わせが増えると書き出しきれず毎回GASに行ってしまうため
+    const go = name === "type"
+      ? "if(this.form.stat)this.form.stat.disabled=true;this.form.submit()"
+      : "this.form.submit()";
+    let s = '<select name="' + name + '" onchange="' + go + '">';
     opts.forEach(o => {
       // 種目の値は成績シートの見出しから作るのでエスケープする
       s += '<option value="' + esc(o.value).replace(/"/g, "&quot;") + '"' +
