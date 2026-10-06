@@ -143,6 +143,26 @@ function prefetchLinks(html) {
   } catch (e) {}
 }
 
+// 成績ページは全種目が1ページに入り、種目はページの中で切り替えるようになった。
+// 古いリンクやブックマークの stat= は、選んでいた種目として覚えてページに渡し、
+// URLからは外す（付けたままだと書き出し済みのページに当たらずGASに回ってしまう）
+(function () {
+  var q = location.search;
+  if (q.indexOf("view=stats") === -1 || !/[?&]stat=/.test(q)) return;
+  var keep = [], stat = null, type = "bat";
+  q.replace(/^\?/, "").split("&").forEach(function (p) {
+    var i = p.indexOf("="), k = i < 0 ? p : p.slice(0, i), v = i < 0 ? "" : p.slice(i + 1);
+    if (k === "stat") {
+      try { stat = decodeURIComponent(v.replace(/\+/g, " ")); } catch (e) { stat = v; }
+      return;
+    }
+    if (k === "type" && v) type = v;
+    if (p) keep.push(p);
+  });
+  try { if (stat) sessionStorage.setItem("ppStat:" + type, stat); } catch (e) {}
+  try { history.replaceState(null, "", location.pathname + (keep.length ? "?" + keep.join("&") : "")); } catch (e) {}
+})();
+
 var search = location.search;
 var isLive = search.indexOf(LIVE_PARAM) !== -1; // 試合中の速報は常に最新を取る
 var cachedHtml = isLive ? null : readCache(search);
