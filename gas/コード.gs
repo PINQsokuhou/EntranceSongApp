@@ -40,7 +40,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v86";
+const SITE_VER = "site v87";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -1323,10 +1323,10 @@ function setSpotifyKeys() {
 
 // 全試合経過の列レイアウト（0始まりの列番号）。過去シーズンは球場・打左右・投左右・バット種類が無く左にズレる
 const LAYOUT_NEW = { stadium:1, inning:2, tb:3, outs:4, bases:5, batter:8, pitcher:10,
-  pitches:12, result:14, tbases:18, errs:19, nInning:20, nTb:21, nOuts:22, nSf:24, nSs:25,
+  pitches:12, result:14, dir:15, btype:16, tbases:18, errs:19, nInning:20, nTb:21, nOuts:22, nSf:24, nSs:25,
   runs:26, rbi:27, pblockName:30 };
 const LAYOUT_OLD = { stadium:-1, inning:1, tb:2, outs:3, bases:4, batter:7, pitcher:8,
-  pitches:9, result:11, tbases:14, errs:15, nInning:16, nTb:17, nOuts:18, nSf:20, nSs:21,
+  pitches:9, result:11, dir:12, btype:13, tbases:14, errs:15, nInning:16, nTb:17, nOuts:18, nSf:20, nSs:21,
   runs:22, rbi:23, pblockName:26 };
 var _layoutCache = {};
 // スプレッドシートの形式を「全試合経過」B1見出しで判別（球場=新, 回=旧）。ブック単位でキャッシュ
@@ -1357,6 +1357,10 @@ function rowObj(a, L) {
     // 選手名はシーズンごとの表記ゆれ（冨高/冨髙、フルネーム等）を正規化して揃える
     batter: normName(s(L.batter)), pitcher: normName(s(L.pitcher)),
     pitches: n(L.pitches), result: s(L.result),
+    // 打球方向（0=投 1=左 2=左中 3=中 4=右中 5=右 6=邪）と打球性質（ゴロ/ライナー/フライ）。
+    // 全シーズン通算の打球率に使う。方向は 0 があり得るので数値にせず文字のまま持つ
+    dir: L.dir >= 0 ? String(a[L.dir] === undefined || a[L.dir] === null ? "" : a[L.dir]).replace(/\.0$/, "") : "",
+    btype: s(L.btype),
     tbases: n(L.tbases), errs: n(L.errs),
     nInning: n(L.nInning), nTb: s(L.nTb), nOuts: n(L.nOuts),
     nSf: n(L.nSf), nSs: n(L.nSs),
@@ -3138,7 +3142,7 @@ function commitBatched_(files, label, note) {
 // 試合を保存すると cur / その月 / career に「古くなった」印（時刻）を付ける。
 // 印は書き出し中に付け直されることがあるので、作り始めたときの時刻と同じときだけ消す
 // （書き出し中に次の試合が保存されても、その試合を取りこぼさない）。
-const PUB_VER = "1";               // ページの見た目を変えたら上げる。全ページを作り直す
+const PUB_VER = "2";               // ページの見た目を変えたら上げる。全ページを作り直す
 const PUB_DONE_KEY = "pubDone";    // { ジョブ名: PUB_VER }
 const PUB_DIRTY_KEY = "pubDirty";  // { ジョブ名: 印を付けた時刻 }
 const PUB_CUR_KEY = "pubCur";      // 途中まで進んだジョブ "名前#件数#印の時刻"
@@ -4110,6 +4114,7 @@ const PIT_RANK = [
 
 // 小さいほど上位の指標（成績シートの見出し名で判定）
 const STAT_ASC = {
+  "本塁打率": 1, "WRIP": 1,
   "防御率": 1, "失点率": 1, "FIP": 1, "tRA": 1, "WHIP": 1, "BB/9": 1, "HR/9": 1,
   "被打率": 1, "被出塁率": 1, "被長打率": 1, "被OPS": 1, "得点圏被打率": 1,
   "三振率": 1, "併殺": 1, "3バント失敗": 1, "スクイズ失敗": 1
@@ -4360,6 +4365,7 @@ function statsOnlySeasonData(book, sheetName) {
     return -1;
   }
   const c = {
+    g: col("出場"), app: col("登坂"), gs: col("先発"), phr: col("被本塁打"),
     pa: col("打席"), ab: col("打数"), h: col("安打"), hr: col("本塁打"), tb: col("塁打"),
     rbi: col("打点"), bb: col("四球"), so: col("三振"), d2: col("二塁打"), d3: col("三塁打"),
     hbp: col("死球"), sf: col("犠飛"),
@@ -4374,6 +4380,7 @@ function statsOnlySeasonData(book, sheetName) {
     const pa = n(v[r], c.pa), ab = n(v[r], c.ab);
     if (pa || ab) {
       bat[nm] = {
+        g: n(v[r], c.g),
         pa: pa, ab: ab, h: n(v[r], c.h), d2: n(v[r], c.d2), d3: n(v[r], c.d3),
         hr: n(v[r], c.hr), tb: n(v[r], c.tb), bb: n(v[r], c.bb), hbp: n(v[r], c.hbp),
         sf: n(v[r], c.sf), so: n(v[r], c.so), rbi: n(v[r], c.rbi), rab: 0, rh: 0
@@ -4384,6 +4391,7 @@ function statsOnlySeasonData(book, sheetName) {
     const w = n(v[r], c.w), l = n(v[r], c.l), hld = n(v[r], c.hld), sv = n(v[r], c.sv);
     if (outs || w || l || hld || sv) {
       pit[nm] = {
+        app: n(v[r], c.app), gs: n(v[r], c.gs), hr: n(v[r], c.phr),
         outs: outs, np: n(v[r], c.np), ab: 0, h: n(v[r], c.ph), k: n(v[r], c.k),
         bb: n(v[r], c.pbb), hbp: 0, runs: n(v[r], c.runs), er: n(v[r], c.er),
         w: w, l: l, hld: hld, sv: sv
@@ -4393,44 +4401,391 @@ function statsOnlySeasonData(book, sheetName) {
   return { bat: bat, pit: pit };
 }
 
+// ================= 全シーズン通算（成績シートと同じ式で計算する） =================
+//
+// 全シーズン通算には成績シートが無いので、各シーズンの試合記録（2023年〜）と、
+// 成績表しか残っていない年度（2022年度）を合算して作る。
+//
+// 2022年度の表にある項目（出場・打席・打数・安打・本塁打・塁打・打点・四球・三振／
+// 登坂・先発・勝敗・H・S・投球回・被安打・被本塁打・与四球・奪三振・自責点）だけで
+// 計算できる種目は、2022年度も含めて合算する（src: "all"）。
+// それ以外の項目が要る種目は、2023年以降の試合記録だけから計算する（src: "rec"）。
+// 分子と分母で集計する年度がずれると値が狂う（たとえば失点率を2022年度の投球回込み・
+// 2022年度の失点抜きで割ると低く出る）ため、種目ごとにどちらか一方に揃える。
+//
+// 式は各シーズンの成績シートに合わせてある。ただし次の点は成績シートと違う:
+//  ・FIP・RSAA・PR は、成績シートでは参照先のセルがずれている（別の選手の値や空セルを
+//    見ている）ので、本来の式（リーグ全体の防御率・失点率を基準）で計算する
+//  ・打者の中・右中間・右打球率は、成績シートでは左・左中間と同じ値を数えているので、
+//    投手側と同じ 3・4・5 で数える
+//  ・リーグ平均（wOBA・防御率・失点率）は、選手ごとの値の単純平均ではなく、
+//    打席・投球回で重み付けした全体の値を使う（打席の少ない選手に引っぱられないように）
+
+/** 試合記録の結果が「打数」に入るか（成績シートの打数の式と同じ除外） */
+function isCareerAtBat_(res) {
+  return !(res === "四球" || res === "死球" || res === "犠飛" || res === "犠打" ||
+    res === "スクイズ" || res === "打撃妨害" || res === "妨害");
+}
+/** 得点圏（二塁か三塁に走者）。成績シートは「*二*・一三塁・三塁・満塁」で数えている */
+function isRisp_(bases) {
+  const b = String(bases || "");
+  return /[二三]/.test(b) || b === "満塁";
+}
+
+function newRecBat_() {
+  return { g: 0, pa: 0, ab: 0, h: 0, s1: 0, d2: 0, d3: 0, hr: 0, tb: 0, rbi: 0, runs: 0,
+    sbunt: 0, sh: 0, b3f: 0, sq: 0, sqf: 0, sf: 0, kl: 0, ks: 0, so: 0, bb: 0, hbp: 0,
+    roe: 0, gdp: 0, np: 0, rab: 0, rh: 0, bt: 0, go: 0, ld: 0, fb: 0, dn: 0, dir: [0, 0, 0, 0, 0, 0, 0] };
+}
+function newRecPit_() {
+  return { app: 0, gs: 0, w: 0, l: 0, hld: 0, sv: 0, outs: 0, bf: 0, runs: 0, er: 0,
+    k: 0, kl: 0, ks: 0, bb: 0, hbp: 0, sac: 0, go: 0, ifb: 0, ofb: 0, ld: 0,
+    h: 0, s1: 0, d2: 0, d3: 0, hr: 0, roe: 0, np: 0, ab: 0, rab: 0, rh: 0,
+    bt: 0, gob: 0, ldb: 0, fbb: 0, dn: 0, dir: [0, 0, 0, 0, 0, 0, 0] };
+}
+
+/**
+ * 1シーズンの試合記録から、成績シートと同じ数え方で集計する。
+ * rows は rowsOf の結果（打球方向 dir・打球性質 btype を含む）。
+ * 出場・登坂・先発・勝敗・H・S・失点・自責は、全試合経過の右側の「出場者・投手成績」欄から数える
+ */
+function recStatsFrom_(rows, blockSheet, book) {
+  const bat = {}, pit = {};
+  function B(nm) { return bat[nm] || (bat[nm] = newRecBat_()); }
+  function P(nm) { return pit[nm] || (pit[nm] = newRecPit_()); }
+  rows.forEach(function (r) {
+    const res = r.result, tb = r.tbases, risp = isRisp_(r.bases);
+    const dir = String(r.dir === undefined || r.dir === null ? "" : r.dir).trim();
+    const bt = String(r.btype || "").trim();
+    const d = /^[0-6]$/.test(dir) ? +dir : -1;
+    if (r.batter) {
+      const b = B(r.batter);
+      b.pa++;
+      const ab = isCareerAtBat_(res);
+      if (ab) { b.ab++; if (risp) b.rab++; }
+      if (tb >= 1) { b.h++; if (risp) b.rh++; }
+      if (tb === 1) b.s1++; else if (tb === 2) b.d2++; else if (tb === 3) b.d3++; else if (tb === 4) b.hr++;
+      if (tb >= 1 && tb <= 4) b.tb += tb;
+      if (res !== "併殺") { b.rbi += r.rbi; b.runs += r.runs; }
+      if (res === "生犠打") b.sbunt++;
+      else if (res === "犠打") b.sh++;
+      else if (res === "3犠打失敗") b.b3f++;
+      else if (res === "スクイズ") b.sq++;
+      else if (res === "スク失敗") b.sqf++;
+      else if (res === "犠飛") b.sf++;
+      else if (res === "見三振") { b.kl++; b.so++; }
+      else if (res === "空三振") { b.ks++; b.so++; }
+      else if (res === "四球") b.bb++;
+      else if (res === "死球") b.hbp++;
+      else if (res === "失策") b.roe++;
+      else if (res === "併殺") b.gdp++;
+      b.np += r.pitches;
+      if (bt) { b.bt++; if (bt === "ゴロ") b.go++; else if (bt === "ライナー") b.ld++; else if (bt === "フライ") b.fb++; }
+      if (dir) { b.dn++; if (d >= 0) b.dir[d]++; }
+    }
+    if (r.pitcher) {
+      const p = P(r.pitcher);
+      p.bf++;
+      p.outs += outsAddedOf(r);
+      if (res === "見三振") { p.kl++; p.k++; }
+      else if (res === "空三振") { p.ks++; p.k++; }
+      else if (res === "四球") p.bb++;
+      else if (res === "死球") p.hbp++;
+      if (res === "生犠打" || res === "犠打" || res === "スクイズ") p.sac++;
+      if (res === "ゴロ") p.go++;
+      if (res === "フライ" && d === 0) p.ifb++;
+      if ((res === "フライ" && d >= 1 && d <= 5) || res === "犠飛") p.ofb++;
+      if (res === "ライナー") p.ld++;
+      if (tb >= 1) { p.h++; if (risp) p.rh++; }
+      if (tb === 1) p.s1++; else if (tb === 2) p.d2++; else if (tb === 3) p.d3++; else if (tb === 4) p.hr++;
+      if (r.errs >= 1 && r.errs <= 4) p.roe++;
+      p.np += r.pitches;
+      if (isCareerAtBat_(res)) { p.ab++; if (risp) p.rab++; }
+      if (bt) { p.bt++; if (bt === "ゴロ") p.gob++; else if (bt === "ライナー") p.ldb++; else if (bt === "フライ") p.fbb++; }
+      if (dir) { p.dn++; if (d >= 0) p.dir[d]++; }
+    }
+  });
+  // 出場者・投手成績の欄（新形式は AD〜AL、旧形式は Z〜AH）
+  const sh = (book || ss()).getSheetByName(blockSheet);
+  if (sh) {
+    const PB = layoutOf(book || ss()).pblockName;
+    const v = sh.getDataRange().getValues();
+    for (let r = 1; r < v.length; r++) {
+      if (v[r].length < PB + 8) continue;
+      const g = normName(v[r][PB - 1]); if (g) B(g).g++;
+      const pn = normName(v[r][PB]);
+      if (pn) { const p = P(pn); p.app++; p.runs += +v[r][PB + 1] || 0; p.er += +v[r][PB + 2] || 0; }
+      const st = normName(v[r][PB + 3]); if (st) P(st).gs++;
+      const w = normName(v[r][PB + 4]); if (w) P(w).w++;
+      const l = normName(v[r][PB + 5]); if (l) P(l).l++;
+      const hd = normName(v[r][PB + 6]); if (hd) P(hd).hld++;
+      const s = normName(v[r][PB + 7]); if (s) P(s).sv++;
+    }
+  }
+  return { bat: bat, pit: pit };
+}
+
+// 2022年度の表にもある項目（2022年度も含めて合算する）
+const CAREER_COMMON_BAT = ["g", "pa", "ab", "h", "hr", "tb", "rbi", "bb", "so"];
+const CAREER_COMMON_PIT = ["app", "gs", "w", "l", "hld", "sv", "outs", "h", "hr", "bb", "k", "er"];
+
 var _careerCache = null;
+/**
+ * 全シーズン通算の集計。bat[名前] / pit[名前] は 2022年度も含む共通項目を持ち、
+ * .r に 2023年以降の試合記録だけの詳しい集計を持つ。lg はリーグ全体の基準値
+ */
 function careerData() {
   if (_careerCache) return _careerCache;
   const rows = [];
   const bat = {}, pit = {};
-  const pitFields = ["outs","np","ab","h","k","bb","hbp","runs","er","w","l","hld","sv"];
-  function mergeBat(m) {
-    Object.keys(m).forEach(function (nm) {
-      const a = bat[nm] || (bat[nm] = { pa:0,ab:0,h:0,d2:0,d3:0,hr:0,tb:0,bb:0,hbp:0,sf:0,so:0,rbi:0,rab:0,rh:0 });
-      const x = m[nm];
-      Object.keys(x).forEach(function (f) { a[f] = (a[f] || 0) + (x[f] || 0); });
-    });
+  function slotBat(nm) {
+    return bat[nm] || (bat[nm] = { g: 0, pa: 0, ab: 0, h: 0, hr: 0, tb: 0, rbi: 0, bb: 0, so: 0, r: newRecBat_() });
   }
-  function mergePit(m) {
-    Object.keys(m).forEach(function (nm) {
-      const a = pit[nm] || (pit[nm] = { outs:0,np:0,ab:0,h:0,k:0,bb:0,hbp:0,runs:0,er:0,w:0,l:0,hld:0,sv:0 });
-      pitFields.forEach(function (f) { a[f] += m[nm][f] || 0; });
+  function slotPit(nm) {
+    return pit[nm] || (pit[nm] = { app: 0, gs: 0, w: 0, l: 0, hld: 0, sv: 0, outs: 0, h: 0, hr: 0, bb: 0, k: 0, er: 0, r: newRecPit_() });
+  }
+  function add(dst, src, keys) { keys.forEach(function (k) { dst[k] += src[k] || 0; }); }
+  function addRec(dst, src) {
+    Object.keys(src).forEach(function (k) {
+      if (k === "dir") { for (let i = 0; i < 7; i++) dst.dir[i] += src.dir[i] || 0; }
+      else dst[k] += src[k] || 0;
     });
   }
   seasonList().forEach(function (s) {
     const book = bookById(s.id);
-    // 成績のみの年度（試合データ無し）は成績表から読み込む
     if (s.statsSheet) {
+      // 成績のみの年度: 共通項目だけ
       const d = statsOnlySeasonData(book, s.statsSheet);
-      mergeBat(d.bat); mergePit(d.pit);
+      Object.keys(d.bat).forEach(function (nm) { add(slotBat(nm), d.bat[nm], CAREER_COMMON_BAT); });
+      Object.keys(d.pit).forEach(function (nm) { add(slotPit(nm), d.pit[nm], CAREER_COMMON_PIT); });
       return;
     }
     const r = rowsOf(ALL_GAMES, book); // 各シーズン1回だけ読む
     if (!r.length) return;
     rows.push.apply(rows, r);
-    mergeBat(batAllFrom(r));
-    mergePit(pitAllFrom(r, ALL_GAMES, book));
+    const rec = recStatsFrom_(r, ALL_GAMES, book);
+    Object.keys(rec.bat).forEach(function (nm) {
+      const a = slotBat(nm);
+      add(a, rec.bat[nm], CAREER_COMMON_BAT);
+      addRec(a.r, rec.bat[nm]);
+    });
+    Object.keys(rec.pit).forEach(function (nm) {
+      const a = slotPit(nm);
+      add(a, rec.pit[nm], CAREER_COMMON_PIT);
+      addRec(a.r, rec.pit[nm]);
+    });
   });
-  _careerCache = { rows: rows, bat: bat, pit: pit };
+  _careerCache = { rows: rows, bat: bat, pit: pit, lg: careerLeague_(bat, pit) };
   return _careerCache;
 }
 function careerBatData() { return careerData().bat; }
 function careerPitData() { return careerData().pit; }
+
+/** wOBA の分子と分母（成績シートの係数） */
+function wobaParts_(b) {
+  return {
+    n: 0.692 * b.bb + 0.73 * b.hbp + 0.966 * b.roe + 0.865 * b.s1 + 1.334 * b.d2 + 1.725 * b.d3 + 2.065 * b.hr,
+    d: b.ab + b.bb + b.hbp + b.sf
+  };
+}
+/** tRA の分子と分母（成績シートの係数） */
+function traParts_(p) {
+  return {
+    n: 0.297 * p.bb + 0.327 * p.hbp - 0.108 * p.k + 1.401 * p.hr + 0.036 * p.go - 0.124 * p.ifb + 0.132 * p.ofb + 0.289 * p.ld,
+    d: p.k + 0.745 * p.go + 0.304 * p.ld + 0.994 * p.ifb + 0.675 * p.ofb
+  };
+}
+
+/** リーグ全体の基準値（2023年以降の試合記録、打席・投球回で重み付け） */
+function careerLeague_(bat, pit) {
+  let wn = 0, wd = 0, runs = 0, pa = 0;
+  Object.keys(bat).forEach(function (nm) {
+    const b = bat[nm].r, w = wobaParts_(b);
+    wn += w.n; wd += w.d; runs += b.runs; pa += b.pa;
+  });
+  let outs = 0, er = 0, pr = 0, hr = 0, bb = 0, hbp = 0, k = 0, tn = 0, td = 0;
+  Object.keys(pit).forEach(function (nm) {
+    const p = pit[nm].r, t = traParts_(p);
+    outs += p.outs; er += p.er; pr += p.runs; hr += p.hr; bb += p.bb; hbp += p.hbp; k += p.k;
+    tn += t.n; td += t.d;
+  });
+  const ip = outs / 3;
+  const lg = {
+    woba: wd ? wn / wd : null,
+    rpa: pa ? runs / pa : null,          // 打席あたりの得点
+    era: ip ? er * 9 / ip : null,
+    ra: ip ? pr * 9 / ip : null
+  };
+  lg.fipC = (ip && lg.era !== null) ? lg.era - (13 * hr + 3 * (bb + hbp) - 2 * k) / ip : null;
+  lg.traC = (td && lg.ra !== null) ? lg.ra - tn / td * 27 : null;
+  return lg;
+}
+
+function c3(x) { return x.toFixed(3); }   // 0.345（シーズンの成績シートと同じ見せ方）
+function c2(x) { return x.toFixed(2); }
+function c1(x) { return x.toFixed(1); }
+function div_(a, b) { return b ? a / b : null; }
+
+/**
+ * 全シーズン通算の種目。並びと名前は成績シートの見出しと同じ。
+ * id も成績シートの種目と同じにしてあるので、期間を全シーズン通算に切り替えても
+ * 選んでいた種目がそのまま出る。val は (集計, リーグ基準値) から値を返す
+ */
+function careerDef_(label, src, val, fmt) {
+  return { id: "c:" + label, label: label.replace(/\n.*/, ""), src: src, val: val, fmt: fmt,
+           rate: isRateLabel(label), asc: !!STAT_ASC[label.replace(/\n.*/, "")] };
+}
+function dirRate_(i) { return function (x) { return div_(x.dir[i], x.dn); }; }
+
+const CAREER_BAT = [
+  careerDef_("出場", "all", x => x.g),
+  careerDef_("打席", "all", x => x.pa),
+  careerDef_("打数", "all", x => x.ab),
+  careerDef_("安打", "all", x => x.h),
+  careerDef_("単打", "rec", x => x.s1),
+  careerDef_("二塁打", "rec", x => x.d2),
+  careerDef_("三塁打", "rec", x => x.d3),
+  careerDef_("本塁打", "all", x => x.hr),
+  careerDef_("打点", "all", x => x.rbi),
+  careerDef_("得点\n※※", "rec", x => x.runs),
+  careerDef_("生犠打", "rec", x => x.sbunt),
+  careerDef_("犠打", "rec", x => x.sh),
+  careerDef_("3バント失敗", "rec", x => x.b3f),
+  careerDef_("スクイズ", "rec", x => x.sq),
+  careerDef_("スクイズ失敗", "rec", x => x.sqf),
+  careerDef_("犠飛", "rec", x => x.sf),
+  careerDef_("三振", "all", x => x.so),
+  careerDef_("見三振", "rec", x => x.kl),
+  careerDef_("空三振", "rec", x => x.ks),
+  careerDef_("四球", "all", x => x.bb),
+  careerDef_("死球", "rec", x => x.hbp),
+  careerDef_("失策出塁", "rec", x => x.roe),
+  careerDef_("併殺", "rec", x => x.gdp),
+  careerDef_("塁打", "all", x => x.tb),
+  careerDef_("打率", "all", x => div_(x.h, x.ab), c3),
+  careerDef_("出塁率", "rec", x => div_(x.h + x.bb + x.hbp, x.ab + x.bb + x.hbp + x.sf), c3),
+  careerDef_("長打率", "all", x => div_(x.tb, x.ab), c3),
+  careerDef_("純粋長打率", "all", x => x.ab ? (x.tb - x.h) / x.ab : null, c3),
+  careerDef_("OPS", "rec", x => {
+    const ob = x.ab + x.bb + x.hbp + x.sf;
+    return (ob && x.ab) ? (x.h + x.bb + x.hbp) / ob + x.tb / x.ab : null;
+  }, c3),
+  careerDef_("本塁打率", "all", x => div_(x.ab, x.hr), c1),
+  careerDef_("スクイズ成功率", "rec", x => div_(x.sq, x.sq + x.b3f + x.sqf), c3),
+  careerDef_("得点圏打数", "rec", x => x.rab),
+  careerDef_("得点圏安打", "rec", x => x.rh),
+  careerDef_("得点圏打率", "rec", x => div_(x.rh, x.rab), c3),
+  careerDef_("四球率", "all", x => div_(x.bb, x.pa), c3),
+  careerDef_("死球率", "rec", x => div_(x.hbp, x.pa), c3),
+  careerDef_("三振率", "all", x => div_(x.so, x.pa), c3),
+  careerDef_("BB/K", "all", x => div_(x.bb, x.so), c2),
+  careerDef_("P/PA", "rec", x => div_(x.np, x.pa), c2),
+  careerDef_("BABIP", "rec", x => div_(x.h - x.hr, x.ab - x.so - x.hr + x.sf), c3),
+  careerDef_("wOBA", "rec", x => { const w = wobaParts_(x); return div_(w.n, w.d); }, c3),
+  careerDef_("wRAA", "rec", (x, lg) => {
+    const w = wobaParts_(x);
+    return (w.d && lg.woba !== null) ? (w.n / w.d - lg.woba) / 1.24 * x.pa : null;
+  }, c3),
+  careerDef_("wRC", "rec", (x, lg) => {
+    const w = wobaParts_(x);
+    return (w.d && lg.woba !== null && lg.rpa !== null) ? ((w.n / w.d - lg.woba) / 1.24 + lg.rpa) * x.pa : null;
+  }, c3),
+  careerDef_("wRC+", "rec", (x, lg) => {
+    const w = wobaParts_(x);
+    if (!w.d || !x.pa || lg.woba === null || !lg.rpa) return null;
+    return ((w.n / w.d - lg.woba) / 1.24 + lg.rpa) / lg.rpa * 100;
+  }, c1),
+  careerDef_("ゴロ打球率", "rec", x => div_(x.go, x.bt), c3),
+  careerDef_("ライナー打球率", "rec", x => div_(x.ld, x.bt), c3),
+  careerDef_("フライ打球率", "rec", x => div_(x.fb, x.bt), c3),
+  careerDef_("左打球率", "rec", dirRate_(1), c3),
+  careerDef_("左中間打球率", "rec", dirRate_(2), c3),
+  careerDef_("中打球率", "rec", dirRate_(3), c3),
+  careerDef_("右中間打球率", "rec", dirRate_(4), c3),
+  careerDef_("右打球率", "rec", dirRate_(5), c3),
+  careerDef_("投打球率", "rec", dirRate_(0), c3),
+  careerDef_("邪打球率", "rec", dirRate_(6), c3)
+];
+
+function ip_(x) { return x.outs / 3; }
+const CAREER_PIT = [
+  careerDef_("登坂", "all", x => x.app),
+  careerDef_("先発", "all", x => x.gs),
+  careerDef_("救援", "all", x => x.app - x.gs),
+  careerDef_("勝", "all", x => x.w),
+  careerDef_("敗", "all", x => x.l),
+  careerDef_("勝率", "all", x => div_(x.w, x.w + x.l), c3),
+  careerDef_("ホールド", "all", x => x.hld),
+  careerDef_("セーブ", "all", x => x.sv),
+  careerDef_("投球回", "all", x => ip_(x), x => ipStr(Math.round(x * 3))),
+  careerDef_("打者数", "rec", x => x.bf),
+  careerDef_("失点", "rec", x => x.runs),
+  careerDef_("自責点", "all", x => x.er),
+  careerDef_("奪三振", "all", x => x.k),
+  careerDef_("見三振", "rec", x => x.kl),
+  careerDef_("空三振", "rec", x => x.ks),
+  careerDef_("与四球", "all", x => x.bb),
+  careerDef_("与死球", "rec", x => x.hbp),
+  careerDef_("被犠打", "rec", x => x.sac),
+  careerDef_("奪ゴロ", "rec", x => x.go),
+  careerDef_("内野フライ", "rec", x => x.ifb),
+  careerDef_("外野フライ", "rec", x => x.ofb),
+  careerDef_("奪ライナー", "rec", x => x.ld),
+  careerDef_("被安打", "all", x => x.h),
+  careerDef_("被単打", "rec", x => x.s1),
+  careerDef_("被二塁打", "rec", x => x.d2),
+  careerDef_("被三塁打", "rec", x => x.d3),
+  careerDef_("被本塁打", "all", x => x.hr),
+  careerDef_("許失出塁", "rec", x => x.roe),
+  careerDef_("投球数", "rec", x => x.np),
+  careerDef_("防御率", "all", x => x.outs ? x.er * 27 / x.outs : null, c2),
+  careerDef_("失点率", "rec", x => x.outs ? x.runs * 27 / x.outs : null, c2),
+  careerDef_("FIP", "rec", (x, lg) => (x.outs && lg.fipC !== null)
+    ? (13 * x.hr + 3 * (x.bb + x.hbp) - 2 * x.k) / ip_(x) + lg.fipC : null, c2),
+  careerDef_("tRA", "rec", (x, lg) => {
+    const t = traParts_(x);
+    return (t.d && lg.traC !== null) ? t.n / t.d * 27 + lg.traC : null;
+  }, c2),
+  careerDef_("RSAA", "rec", (x, lg) => (x.outs && lg.ra !== null)
+    ? (lg.ra - x.runs * 27 / x.outs) * ip_(x) / 9 : null, c2),
+  careerDef_("PR", "rec", (x, lg) => (x.outs && lg.era !== null)
+    ? (lg.era - x.er * 27 / x.outs) * ip_(x) / 9 : null, c2),
+  careerDef_("WRIP", "all", x => x.outs ? (x.bb + x.hr) / ip_(x) : null, c2),
+  careerDef_("WHIP", "all", x => x.outs ? (x.bb + x.h) / ip_(x) : null, c2),
+  careerDef_("LOB%", "rec", x => div_(x.h + x.bb + x.hbp - x.runs, x.h + x.bb + x.hbp - 1.4 * x.hr), c2),
+  careerDef_("HR/9", "all", x => x.outs ? x.hr * 27 / x.outs : null, c2),
+  careerDef_("BB/9", "all", x => x.outs ? x.bb * 27 / x.outs : null, c2),
+  careerDef_("K/9", "all", x => x.outs ? x.k * 27 / x.outs : null, c2),
+  careerDef_("K/BB", "all", x => div_(x.k, x.bb), c2),
+  careerDef_("BABIP", "rec", x => div_(x.h - x.hr, x.bf - x.bb - x.hbp - x.k - x.hr), c3),
+  careerDef_("被打数", "rec", x => x.ab),
+  careerDef_("被OPS", "rec", x => {
+    const ob = x.ab + x.bb + x.hbp + x.sac;
+    return (ob && x.ab) ? (x.h + x.bb + x.hbp) / ob + (x.s1 + 2 * x.d2 + 3 * x.d3 + 4 * x.hr) / x.ab : null;
+  }, c3),
+  careerDef_("得点圏被打数", "rec", x => x.rab),
+  careerDef_("得点圏被安打", "rec", x => x.rh),
+  careerDef_("得点圏被打率", "rec", x => div_(x.rh, x.rab), c3),
+  careerDef_("被打率", "rec", x => div_(x.h, x.ab), c3),
+  // 成績シートの式どおり、分母に被犠打を入れている
+  careerDef_("被出塁率", "rec", x => div_(x.h + x.bb + x.hbp, x.ab + x.bb + x.hbp + x.sac), c3),
+  careerDef_("被長打率", "rec", x => div_(x.s1 + 2 * x.d2 + 3 * x.d3 + 4 * x.hr, x.ab), c3),
+  careerDef_("P/PA", "rec", x => div_(x.np, x.bf), c2),
+  careerDef_("ゴロ打球率", "rec", x => div_(x.gob, x.bt), c3),
+  careerDef_("ライナー打球率", "rec", x => div_(x.ldb, x.bt), c3),
+  careerDef_("フライ打球率", "rec", x => div_(x.fbb, x.bt), c3),
+  careerDef_("左打球率", "rec", dirRate_(1), c3),
+  careerDef_("左中打球率", "rec", dirRate_(2), c3),
+  careerDef_("中打球率", "rec", dirRate_(3), c3),
+  careerDef_("右中打球率", "rec", dirRate_(4), c3),
+  careerDef_("右打球率", "rec", dirRate_(5), c3),
+  careerDef_("投打球率", "rec", dirRate_(0), c3),
+  careerDef_("邪打球率", "rec", dirRate_(6), c3)
+];
+
+/** 種目の集計元（2022年度込みの共通項目か、2023年以降の試合記録か） */
+function careerSrc_(def, d) { return d ? (def.src === "rec" ? d.r : d) : null; }
+const CAREER_REC_NOTE = "この種目は2022年度の成績表に無い項目を使うため、2023年以降の試合記録から集計しています";
 
 // ---------------- 選手個人ページ ----------------
 
@@ -4551,18 +4906,41 @@ function gamesByDate() {
   return map;
 }
 
-// 指標 def における name の順位（rate種目は規定到達者のみ）。{rank, total}
-function statRankOf(dataMap, def, isBat, name) {
-  const arr = [];
-  Object.keys(dataMap).forEach(function (nm) {
-    const d = dataMap[nm];
-    if (def.rate) {
-      // この順位表は全シーズン通算の選手ページからしか呼ばれないので通算の基準を使う
-      if (isBat && d.pa < CAREER_MIN_PA) return;
-      if (!isBat && d.outs < CAREER_MIN_OUTS) return;
+
+/**
+ * 全シーズン通算の選手ページの表。成績シートと同じ全種目を、値と順位つきで並べる。
+ * 2023年以降の試合記録から集計した種目には＊を付ける
+ */
+function careerMetricTable_(map, defs, isBat, name, lg) {
+  const d = map[name];
+  let t = '<div class="tbl"><table class="st"><tr><th class="name">項目</th><th>値</th><th>順位</th></tr>';
+  defs.forEach(function (def) {
+    const x = careerSrc_(def, d);
+    const v = x ? def.val(x, lg) : null;
+    const label = esc(def.label) + (def.src === "rec" ? '<span class="sub">＊</span>' : '');
+    if (v === null || v === undefined || (typeof v === "number" && !isFinite(v))) {
+      t += '<tr><td class="name">' + label + '</td><td>-</td><td>-</td></tr>';
+      return;
     }
-    const v = def.val(d);
-    if (v === null || v === undefined || (typeof v === "number" && isNaN(v) && v !== Infinity)) return;
+    const rk = careerRankOf_(map, def, isBat, name, lg);
+    const rkStr = rk.rank ? (rk.rank + '位 / ' + rk.total + '人') : (def.rate ? '規定未満' : '-');
+    t += '<tr><td class="name">' + label + '</td><td><b>' + esc(def.fmt ? def.fmt(v) : String(v)) +
+      '</b></td><td class="sub" style="text-align:center">' + rkStr + '</td></tr>';
+  });
+  return t + '</table></div>';
+}
+
+/** 全シーズン通算での順位（率の種目は通算の規定以上の人の中で）。{rank, total} */
+function careerRankOf_(map, def, isBat, name, lg) {
+  const arr = [];
+  Object.keys(map).forEach(function (nm) {
+    const x = careerSrc_(def, map[nm]);
+    if (!x) return;
+    const q = isBat ? x.pa : x.outs;
+    if (!q) return;
+    if (def.rate && q < (isBat ? CAREER_MIN_PA : CAREER_MIN_OUTS)) return;
+    const v = def.val(x, lg);
+    if (v === null || v === undefined || (typeof v === "number" && !isFinite(v))) return;
     arr.push({ nm: nm, v: v });
   });
   arr.sort(function (a, b) { return def.asc ? a.v - b.v : b.v - a.v; });
@@ -4576,76 +4954,6 @@ function statRankOf(dataMap, def, isBat, name) {
   return { rank: mine, total: arr.length };
 }
 
-function findDef(defs, id) { return defs.filter(function (d) { return d.id === id; })[0]; }
-
-// 1選手の指標一覧を「項目 / 値 / 順位」の表にする
-function metricTable(dataMap, displayDefs, isBat, name) {
-  const d = dataMap[name];
-  let t = '<div class="tbl"><table class="st"><tr><th class="name">項目</th><th>値</th><th>順位</th></tr>';
-  displayDefs.forEach(function (def) {
-    if (!def) return;
-    const v = def.val(d);
-    if (v === null || v === undefined || (typeof v === "number" && isNaN(v) && v !== Infinity)) {
-      t += '<tr><td class="name">' + esc(def.label) + '</td><td>-</td><td>-</td></tr>';
-      return;
-    }
-    const disp = def.fmt ? def.fmt(v) : String(v);
-    let rkStr = "-";
-    if (!def.noRank) {
-      const rk = statRankOf(dataMap, def, isBat, name);
-      rkStr = rk.rank ? (rk.rank + '位 / ' + rk.total + '人') : (def.rate ? '規定未満' : '-');
-    }
-    t += '<tr><td class="name">' + esc(def.label) + '</td><td><b>' + esc(disp) +
-      '</b></td><td class="sub" style="text-align:center">' + rkStr + '</td></tr>';
-  });
-  return t + '</table></div>';
-}
-
-// 通算ページで出す基本指標（ランキング定義を再利用）
-function careerBatDefs() {
-  return [
-    findDef(BAT_RANK, "pa"),
-    { label: "打数", val: function (x) { return x.ab; }, noRank: true },
-    findDef(BAT_RANK, "hits"),
-    findDef(BAT_RANK, "d2"),
-    findDef(BAT_RANK, "d3"),
-    findDef(BAT_RANK, "hr"),
-    findDef(BAT_RANK, "rbi"),
-    findDef(BAT_RANK, "bb"),
-    { label: "死球", val: function (x) { return x.hbp; }, noRank: true },
-    findDef(BAT_RANK, "so"),
-    findDef(BAT_RANK, "tb"),
-    findDef(BAT_RANK, "avg"),
-    findDef(BAT_RANK, "obp"),
-    findDef(BAT_RANK, "slg"),
-    findDef(BAT_RANK, "ops"),
-    findDef(BAT_RANK, "risp"),
-    findDef(BAT_RANK, "wrcplus")
-  ];
-}
-function careerPitDefs() {
-  return [
-    findDef(PIT_RANK, "ip"),
-    findDef(PIT_RANK, "w"),
-    findDef(PIT_RANK, "l"),
-    findDef(PIT_RANK, "hld"),
-    findDef(PIT_RANK, "sv"),
-    findDef(PIT_RANK, "k"),
-    { label: "与四球", val: function (x) { return x.bb; }, noRank: true },
-    { label: "与死球", val: function (x) { return x.hbp; }, noRank: true },
-    { label: "被安打", val: function (x) { return x.h; }, noRank: true },
-    findDef(PIT_RANK, "r"),
-    findDef(PIT_RANK, "er"),
-    { label: "球数", val: function (x) { return x.np; }, noRank: true },
-    findDef(PIT_RANK, "era"),
-    findDef(PIT_RANK, "whip"),
-    findDef(PIT_RANK, "k9"),
-    findDef(PIT_RANK, "bb9"),
-    findDef(PIT_RANK, "kbb"),
-    findDef(PIT_RANK, "oavg"),
-    findDef(PIT_RANK, "ra")
-  ];
-}
 
 function renderPlayer(nameRaw, period) {
   const url = siteUrl();
@@ -4671,19 +4979,17 @@ function renderPlayer(nameRaw, period) {
   let found = false;
   if (isCareer) {
     const cd = careerData();
-    const cb = cd.bat; attachWrcPlus(cb);
-    const cp = cd.pit;
-    if (cb[name]) {
+    const cb = cd.bat, cp = cd.pit;
+    if (cb[name] && cb[name].pa) {
       found = true;
-      body += '<h2>打撃成績（通算・基本）</h2>' +
-        metricTable(cb, careerBatDefs(), true, name);
+      body += '<h2>打撃成績（全シーズン通算）</h2>' + careerMetricTable_(cb, CAREER_BAT, true, name, cd.lg);
     }
     const p = cp[name];
-    if (p && (p.outs > 0 || p.w || p.l || p.hld || p.sv)) {
+    if (p && (p.outs > 0 || p.app || p.w || p.l || p.hld || p.sv)) {
       found = true;
-      body += '<h2>投手成績（通算・基本）</h2>' +
-        metricTable(cp, careerPitDefs(), false, name);
+      body += '<h2>投手成績（全シーズン通算）</h2>' + careerMetricTable_(cp, CAREER_PIT, false, name, cd.lg);
     }
+    if (found) body += '<p class="sub">※ ＊の種目は2022年度の成績表に無い項目を使うため、2023年以降の試合記録から集計しています</p>';
     if (!found) {
       body += '<p class="sub">通算データにこの選手の記録が見つかりませんでした。</p>';
     }
@@ -4816,7 +5122,9 @@ function renderStats(type, statId, period) {
   const sheetDefs = sheetRankDefs(src, isBat);
   const useSheet = sheetDefs.length > 0;
 
-  const defs = useSheet ? sheetDefs : (isBat ? BAT_RANK : PIT_RANK);
+  const defs = useSheet ? sheetDefs
+    : isCareer ? (isBat ? CAREER_BAT : CAREER_PIT)
+    : (isBat ? BAT_RANK : PIT_RANK);
   // 指定が無い（または期間を変えて種目が入れ替わった）ときの既定は打率／防御率。
   // 成績シートの並び順そのままだと先頭が「出場」「登坂」になってしまうため。
   const fallback = isBat ? "打率" : "防御率";
@@ -4825,17 +5133,18 @@ function renderStats(type, statId, period) {
   const subLabel = isBat ? "打席" : "投球回";
 
   // 成績シートが無い期間の集計は、種目に関係なく1回だけ行う
-  let data = null;
+  let data = null, lg = null;
   if (!useSheet) {
     if (isCareer) {
       data = isBat ? careerBatData() : careerPitData();
+      lg = careerData().lg;
     } else if (rp.statsOnly) {
       const d = statsOnlyDataOf(rp.seasonId);
       data = isBat ? d.bat : d.pit;
     } else {
       data = isBat ? batAllFrom(rowsOf(rp.sheet)) : pitAllFrom(rowsOf(rp.sheet), rp.sheet);
     }
-    if (isBat) attachWrcPlus(data); // WRC+ はリーグ全体から算出するため事前に付与
+    if (isBat && !isCareer) attachWrcPlus(data); // WRC+ はリーグ全体から算出するため事前に付与
   }
 
   // 全種目の順位表を1ページに入れ、種目の切り替えはブラウザの中で行う。
@@ -4871,16 +5180,20 @@ function renderStats(type, statId, period) {
       }
     } else {
       Object.keys(data).forEach(nm => {
-        const d = data[nm];
+        // 全シーズン通算は、種目ごとに 2022年度込み か 2023年以降の試合記録 かを使い分ける
+        const x = isCareer ? careerSrc_(def, data[nm]) : data[nm];
+        if (!x) return;
+        const q = isBat ? x.pa : x.outs;
         if (def.rate) {
           // 絞り込むのは全シーズン通算のときだけ。各シーズンは全員を載せる
-          if (isCareer && isBat && d.pa < CAREER_MIN_PA) return;
-          if (isCareer && !isBat && d.outs < CAREER_MIN_OUTS) return;
+          if (isCareer && isBat && q < CAREER_MIN_PA) return;
+          if (isCareer && !isBat && q < CAREER_MIN_OUTS) return;
         }
-        const v = def.val(d);
+        if (isCareer && !q) return;   // その集計範囲で打席・投球回が無い人は載せない
+        const v = isCareer ? def.val(x, lg) : def.val(x);
         if (v === null || v === undefined || isNaN(v) && v !== Infinity) return;
         list.push({ name: nm, v: v, disp: def.fmt ? def.fmt(v) : String(v),
-          sub: isBat ? String(d.pa) : ipStr(d.outs) });
+          sub: isBat ? String(q) : ipStr(q) });
       });
     }
     list.sort((a, b) => def.asc ? a.v - b.v : b.v - a.v);
@@ -4894,7 +5207,8 @@ function renderStats(type, statId, period) {
     });
     return rows;
   }
-  const all = defs.map(d => ({ id: d.id, label: d.label, rate: !!d.rate, rows: rankRows(d) }));
+  const all = defs.map(d => ({ id: d.id, label: d.label, rate: !!d.rate, rows: rankRows(d),
+    note: (isCareer && d.src === "rec") ? CAREER_REC_NOTE : "" }));
   const i0 = Math.max(0, defs.indexOf(def0));
 
   function sel(name, opts, current, extra) {
@@ -4932,8 +5246,8 @@ function renderStats(type, statId, period) {
   });
   if (first.rows.length === 0) t += '<tr><td colspan="4">対象者がいません</td></tr>';
   body += t + '</table></div>';
-  body += '<div id="ppNote">' + (careerNote && first.rate ? '<p class="sub">※ ' + esc(careerNote) + '</p>' : '') + '</div>';
-  if (!useSheet && isCareer) body += '<p class="sub">※ 全シーズン通算は試合記録からの集計のため、種目は基本指標のみです</p>';
+  body += '<div id="ppNote">' + (careerNote && first.rate ? '<p class="sub">※ ' + esc(careerNote) + '</p>' : '') +
+    (first.note ? '<p class="sub">※ ' + esc(first.note) + '</p>' : '') + '</div>';
   body += kiteiBoxHtml(rp);   // サークルの決まり。ページの一番下に置く
 
   // < を逃がしておかないと、選手名などに </script> が含まれたときにページが壊れる
@@ -4968,7 +5282,8 @@ function statsSwitch_(P, S, SUB, CN, TY) {
     }
     if (!d.rows.length) h += '<tr><td colspan="4">対象者がいません</td></tr>';
     document.getElementById("ppRank").innerHTML = h + '</table>';
-    document.getElementById("ppNote").innerHTML = (CN && d.rate) ? '<p class="sub">※ ' + e(CN) + '</p>' : '';
+    document.getElementById("ppNote").innerHTML = ((CN && d.rate) ? '<p class="sub">※ ' + e(CN) + '</p>' : '') +
+      (d.note ? '<p class="sub">※ ' + e(d.note) + '</p>' : '');
     sel.selectedIndex = i;
   }
   function find(id) {
