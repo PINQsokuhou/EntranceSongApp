@@ -1043,22 +1043,69 @@ function musicUnlock(){
 document.addEventListener('touchend', musicUnlock, true);
 document.addEventListener('click', musicUnlock, true);
 function musicRevoke(){ if (musicUrl) { try { URL.revokeObjectURL(musicUrl); } catch (e) {} musicUrl = null; } }
+// 保存した曲を <audio> に渡す方法。上から順に試し、鳴った方法を覚えて次からそれを使う。
+//  0: IndexedDB から出した Blob をそのまま渡す（速い）
+//  1: いったん中身を読み出し、メモリ上に Blob を作り直して渡す
+//  2: data: URL にして渡す（Blob の URL を使わない）
+// Safari は、IndexedDB に保存した Blob の URL を再生しようとすると、
+// 中身は正しい mp3 でも NotSupportedError で弾くことがある（iPad で実際に起きた）。
+var MUSIC_HOW_LAST = 2;
+var musicHow = 0, musicPlayToken = 0;
+function musicReadBuf(blob){
+  return new Promise(function(res, rej){
+    var fr = new FileReader();
+    fr.onload = function(){ res(fr.result); };
+    fr.onerror = function(){ rej(fr.error); };
+    fr.readAsArrayBuffer(blob);
+  });
+}
+function musicReadDataUrl(blob){
+  return new Promise(function(res, rej){
+    var fr = new FileReader();
+    fr.onload = function(){ res(fr.result); };
+    fr.onerror = function(){ rej(fr.error); };
+    fr.readAsDataURL(blob);
+  });
+}
+function musicSrcOf(blob, how){
+  if (how === 0) return Promise.resolve(URL.createObjectURL(blob));
+  return musicReadBuf(blob).then(function(buf){
+    var b = new Blob([buf], { type: blob.type || 'audio/mpeg' });
+    return how === 1 ? URL.createObjectURL(b) : musicReadDataUrl(b);
+  });
+}
 function musicPlayBlob(blob){
   var el = musicElem();
   if (musicFadeTimer) { clearInterval(musicFadeTimer); musicFadeTimer = null; }
-  musicRevoke();
-  musicUrl = URL.createObjectURL(blob);
-  el.src = musicUrl;
-  el.volume = 1;
-  var p = el.play();
-  if (p && p.catch) p.catch(function(err){
+  musicTryPlay(el, blob, musicHow, ++musicPlayToken);
+}
+function musicTryPlay(el, blob, how, token){
+  function fail(err){
+    if (token !== musicPlayToken) return;   // もう次の曲に移っている
+    var name = String(err && err.name ? err.name : err);
+    if (name === 'NotSupportedError' && how < MUSIC_HOW_LAST) {
+      musicTryPlay(el, blob, how + 1, token);
+      return;
+    }
     // 鳴らせなかった理由を黙って捨てない。理由によって直し方が違うので案内も変える
-    musicLastError = String(err && err.name ? err.name : err);
-    var hint = musicLastError === 'NotSupportedError'
-      ? 'この端末が対応していない形式です。「楽曲を再取得」を試してください'
+    var me = el.error;
+    musicLastError = name + (me ? '/code' + me.code + (me.message ? ' ' + me.message : '') : '') +
+      ' / 方法' + how + ' / ' + (blob.type || '種類なし') + ' ' + Math.round(blob.size / 1024) + 'KB';
+    var hint = name === 'NotSupportedError'
+      ? 'この端末では鳴らせませんでした。この表示を開発担当に伝えてください'
       : '画面を一度タップしてから試してください';
     showToast('曲を鳴らせませんでした（' + musicLastError + '）。' + hint);
-  });
+  }
+  musicSrcOf(blob, how).then(function(src){
+    var isBlobUrl = src.indexOf('blob:') === 0;
+    if (token !== musicPlayToken) { if (isBlobUrl) URL.revokeObjectURL(src); return; }
+    musicRevoke();
+    if (isBlobUrl) musicUrl = src;
+    el.src = src;
+    el.volume = 1;
+    var p = el.play();
+    if (p && p.then) p.then(function(){ if (token === musicPlayToken) musicHow = how; }, fail);
+  }, fail);
 }
 var musicLastError = '';
 function musicNextInSeq(){
