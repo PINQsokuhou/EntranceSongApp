@@ -842,20 +842,29 @@ function musicDb(){
   });
   return musicDbP;
 }
+// 曲は Blob ではなく { type, data: ArrayBuffer } の形でしまう。
+// Safari は IndexedDB に入れた Blob の中身を別ファイルで持っていて、
+// 目録だけ残って中身が消えることがある（iPad で読み出すと NotFoundError になった）。
+// バイト列そのものなら、記録と一緒に保存されるので離ればなれにならない。
+function musicRecToBlob(r){
+  if (!r) return null;
+  if (r.data) return new Blob([r.data], { type: r.type || 'audio/mpeg' });
+  return null;   // 旧形式（Blob）は信用しない。形式の更新で消えているはず
+}
 function musicGet(id){
   return musicDb().then(function(db){
     return new Promise(function(res){
       var q = db.transaction(MUSIC_STORE).objectStore(MUSIC_STORE).get(id);
-      q.onsuccess = function(){ res(q.result || null); };
+      q.onsuccess = function(){ res(musicRecToBlob(q.result)); };
       q.onerror = function(){ res(null); };
     });
   }).catch(function(){ return null; });
 }
-function musicPut(id, blob){
+function musicPut(id, type, buf){
   return musicDb().then(function(db){
     return new Promise(function(res, rej){
       var t = db.transaction(MUSIC_STORE, 'readwrite');
-      t.objectStore(MUSIC_STORE).put(blob, id);
+      t.objectStore(MUSIC_STORE).put({ type: type, data: buf }, id);
       t.oncomplete = function(){ res(true); };
       t.onerror = function(){ rej(t.error); };
     });
@@ -881,7 +890,7 @@ function musicFetchOne(id){
       if (!j || !j.ok || !j.dataBase64) throw new Error(j && j.error ? j.error : '取得できません');
       var bin = atob(j.dataBase64), n = bin.length, u8 = new Uint8Array(n);
       for (var i = 0; i < n; i++) u8[i] = bin.charCodeAt(i);
-      return musicPut(id, new Blob([u8], { type: audioTypeOf(j.mime, j.name) }))
+      return musicPut(id, audioTypeOf(j.mime, j.name), u8.buffer)
         .then(function(){ return true; });
     });
   });
@@ -957,11 +966,12 @@ function musicClearAll(){
 }
 
 // 保存の形式。上げると、次に開いたときに保存済みのぶんを捨てて取り直す
-var MUSIC_FMT = '2';
+var MUSIC_FMT = '3';
 /**
  * 形式が古ければ作り直す。
  * 1 までは何でも mp3 として保存していたため、wav のアナウンスが
  * iPad（Safari）で鳴らなかった。種類を正しく付け直すには取り直すしかない。
+ * 2 までは Blob でしまっていたため、Safari で中身が消えることがあった（musicRecToBlob）。
  */
 function musicMigrate(){
   var cur = null;
@@ -1080,20 +1090,22 @@ function musicPlayBlob(blob){
   musicTryPlay(el, blob, musicHow, ++musicPlayToken);
 }
 function musicTryPlay(el, blob, how, token){
-  function fail(err){
+  function fail(err, fromPlay){
     if (token !== musicPlayToken) return;   // もう次の曲に移っている
     var name = String(err && err.name ? err.name : err);
-    if (name === 'NotSupportedError' && how < MUSIC_HOW_LAST) {
+    // 「画面に触れていない」で弾かれたときは、渡し方を変えても鳴らない
+    var tapNeeded = name === 'NotAllowedError';
+    if (!tapNeeded && name !== 'AbortError' && how < MUSIC_HOW_LAST) {
       musicTryPlay(el, blob, how + 1, token);
       return;
     }
     // 鳴らせなかった理由を黙って捨てない。理由によって直し方が違うので案内も変える
-    var me = el.error;
+    var me = fromPlay ? el.error : null;
     musicLastError = name + (me ? '/code' + me.code + (me.message ? ' ' + me.message : '') : '') +
       ' / 方法' + how + ' / ' + (blob.type || '種類なし') + ' ' + Math.round(blob.size / 1024) + 'KB';
-    var hint = name === 'NotSupportedError'
-      ? 'この端末では鳴らせませんでした。この表示を開発担当に伝えてください'
-      : '画面を一度タップしてから試してください';
+    var hint = tapNeeded
+      ? '画面を一度タップしてから試してください'
+      : 'この端末では鳴らせませんでした。この表示を開発担当に伝えてください';
     showToast('曲を鳴らせませんでした（' + musicLastError + '）。' + hint);
   }
   musicSrcOf(blob, how).then(function(src){
@@ -1104,8 +1116,9 @@ function musicTryPlay(el, blob, how, token){
     el.src = src;
     el.volume = 1;
     var p = el.play();
-    if (p && p.then) p.then(function(){ if (token === musicPlayToken) musicHow = how; }, fail);
-  }, fail);
+    if (p && p.then) p.then(function(){ if (token === musicPlayToken) musicHow = how; },
+                            function(err){ fail(err, true); });
+  }, function(err){ fail(err, false); });
 }
 var musicLastError = '';
 function musicNextInSeq(){
