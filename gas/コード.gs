@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v96";
+const SITE_VER = "site v97";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -1434,10 +1434,10 @@ function setSpotifyKeys() {
 }
 
 // 全試合経過の列レイアウト（0始まりの列番号）。過去シーズンは球場・打左右・投左右・バット種類が無く左にズレる
-const LAYOUT_NEW = { stadium:1, inning:2, tb:3, outs:4, bases:5, batter:8, pitcher:10,
+const LAYOUT_NEW = { stadium:1, inning:2, tb:3, outs:4, bases:5, sf:6, ss:7, batter:8, pitcher:10,
   pitches:12, count:13, result:14, dir:15, btype:16, tbases:18, errs:19, nInning:20, nTb:21, nOuts:22, nBases:23,
   nSf:24, nSs:25, runs:26, rbi:27, pblockName:30 };
-const LAYOUT_OLD = { stadium:-1, inning:1, tb:2, outs:3, bases:4, batter:7, pitcher:8,
+const LAYOUT_OLD = { stadium:-1, inning:1, tb:2, outs:3, bases:4, sf:5, ss:6, batter:7, pitcher:8,
   pitches:9, count:10, result:11, dir:12, btype:13, tbases:14, errs:15, nInning:16, nTb:17, nOuts:18, nBases:19,
   nSf:20, nSs:21, runs:22, rbi:23, pblockName:26 };
 var _layoutCache = {};
@@ -4040,6 +4040,140 @@ function pitchCountFix_(apply) {
     (stopped ? "\n\n※ 時間切れで「" + stopped + "」の手前で止めました。" +
       (apply ? "もう一度実行すると続きから進みます（直した試合は飛ばします）" : "一覧はここまでです") : "") +
     (apply ? "" : "\n\n問題なければ fixPitchCounts() を実行してください。");
+  Logger.log(msg);
+  return msg;
+}
+
+// ---- 過去の試合のホールドを今の決め方で付け直す（一度きりの修復用）----
+// 今の決め方（記録アプリ 3.6 と同じ）:
+//  - 救援投手（先発は対象外）で、勝ち・セーブ・負けが付いていない
+//  - 登板したときにリードしていて、3点差以内／同点の走者が塁上・打席・次打者にいる／
+//    その登板で3イニング以上投げた、のどれか
+//  - その登板でアウトを1つ以上取り、投げている間リードを守った（同点・逆転されていない）
+//  - 負けたチーム・引き分けの試合の投手にも付く。再登板は登板ごとに見て、どれか1回で満たせばよい
+// 勝ち・負け・セーブは記録されているものをそのまま使い、ホールドの列だけを書き換える。
+// 対象: 全シーズンの日付シート・全試合経過・月間の経過シート（右側の投手成績の欄）
+// 使い方: まず fixHoldsDryRun() で変わる試合を確認 → 問題なければ fixHolds() を実行。
+function fixHoldsDryRun() { return holdFix_(false); }
+function fixHolds() { return holdFix_(true); }
+
+/** 塁況（"一二塁" "満塁" など）から走者の数 */
+function runnersOfLabel_(label) {
+  const s = String(label || "");
+  if (s.indexOf("満") >= 0) return 3;
+  return (s.match(/[一二三]/g) || []).length;
+}
+
+/** 1試合ぶんの行（打席の行）から、今の決め方でのホールド投手を出す */
+function holdsOfGame_(v, rows, L, exclude) {
+  const lastOf = {}, starter = {}, stints = [];
+  rows.forEach(function (r) {
+    const p = normName(v[r][L.pitcher]);
+    if (!p) return;
+    const tb = String(v[r][L.tb]).trim();
+    const team = tb === "表" ? "後攻" : "先攻";           // 表は後攻チームが守る
+    if (!starter[team]) starter[team] = p;
+    let st = stints.length ? lastOf[team] : null;
+    if (!st || st.p !== p) {                                 // 投手が替わったら新しい登板
+      const sf = Number(v[r][L.sf]) || 0, ss = Number(v[r][L.ss]) || 0;
+      st = { p: p, team: team, lead: team === "先攻" ? sf - ss : ss - sf,
+             runners: runnersOfLabel_(v[r][L.bases]), outs: 0, kept: true };
+      stints.push(st);
+      lastOf[team] = st;
+    }
+    const ro = { tb: tb, inning: Number(v[r][L.inning]) || 0, outs: Number(v[r][L.outs]) || 0,
+                 nTb: String(v[r][L.nTb]).trim(), nInning: Number(v[r][L.nInning]) || 0, nOuts: Number(v[r][L.nOuts]) || 0 };
+    st.outs += outsAddedOf(ro);
+    const nsf = Number(v[r][L.nSf]) || 0, nss = Number(v[r][L.nSs]) || 0;
+    if ((team === "先攻" ? nsf - nss : nss - nsf) <= 0) st.kept = false;
+  });
+  const out = [];
+  stints.forEach(function (st) {
+    if (st.p === starter[st.team] || exclude[st.p] || out.indexOf(st.p) >= 0) return;
+    if (st.lead < 1 || st.outs < 1 || !st.kept) return;
+    if (st.lead <= 3 || st.lead <= st.runners + 2 || st.outs >= 9) out.push(st.p);
+  });
+  return out;
+}
+
+function holdFix_(apply) {
+  const started = Date.now();
+  const out = [];
+  let changedGames = 0, stopped = "";
+  const seasons = playableSeasons();
+  const books = seasons.length ? seasons.map(function (s) { return { label: s.label, book: bookById(s.id) }; })
+    : [{ label: "今シーズン", book: ss() }];
+  books.some(function (b) {
+    const L = layoutOf(b.book), PB = L.pblockName;
+    const need = Math.max(PB + 8, L.nSs + 1);
+    const lines = [];
+    let plus = 0, minus = 0, games = 0;
+    const hit = b.book.getSheets().some(function (sh) {
+      if (Date.now() - started > 5 * 60 * 1000) { stopped = b.label + " " + sh.getName(); return true; }
+      const name = sh.getName();
+      const isDate = /^\d{4}-?\d{2}-?\d{2}/.test(name);
+      if (!isDate && name.indexOf("経過") < 0) return false;
+      const last = sh.getLastRow();
+      if (last < 2 || sh.getMaxColumns() < need) return false;
+      const v = sh.getRange(1, 1, last, need).getValues();
+      // 試合ごとに分ける（日付が変わる・回が戻る＝次の試合）。投手成績の欄は試合の先頭の行から下に並ぶ
+      const groups = [];
+      let cur = null, prev = null;
+      for (let r = 1; r < v.length; r++) {
+        if (String(v[r][L.batter] || "") === "") continue;
+        const d = String(v[r][0]), inn = Number(v[r][L.inning]) || 0;
+        if (!prev || d !== prev.d || inn < prev.inn) { cur = { start: r, rows: [] }; groups.push(cur); }
+        cur.rows.push(r);
+        prev = { d: d, inn: inn };
+      }
+      const col = v.map(function (row) { return [row[PB + 6]]; });
+      let touched = false;
+      groups.forEach(function (g, gi) {
+        const end = gi + 1 < groups.length ? groups[gi + 1].start : v.length;   // この試合の行の範囲 [start, end)
+        const old = [], saves = [];
+        for (let r = g.start; r < end; r++) {
+          const h = normName(v[r][PB + 6]); if (h) old.push(h);
+          const s = normName(v[r][PB + 7]); if (s) saves.push(s);
+        }
+        const exclude = {};
+        [normName(v[g.start][PB + 4]), normName(v[g.start][PB + 5])].concat(saves)
+          .forEach(function (n) { if (n) exclude[n] = 1; });
+        const neu = holdsOfGame_(v, g.rows, L, exclude);
+        if (neu.length > end - g.start) return;   // 書く場所が足りない（打席の行より多い）ことは無いはずだが念のため
+        const same = old.length === neu.length && old.every(function (n, i) { return n === neu[i]; });
+        if (same) return;
+        for (let r = g.start; r < end; r++) col[r][0] = "";
+        neu.forEach(function (n, i) { col[g.start + i][0] = n; });
+        touched = true;
+        if (isDate) {
+          games++;
+          const add = neu.filter(function (n) { return old.indexOf(n) < 0; });
+          const del = old.filter(function (n) { return neu.indexOf(n) < 0; });
+          plus += add.length; minus += del.length;
+          lines.push("  " + name + (add.length ? " ＋" + add.join("・") : "") + (del.length ? " －" + del.join("・") : ""));
+        }
+      });
+      if (touched && apply) sh.getRange(2, PB + 7, last - 1, 1).setValues(col.slice(1));
+      return false;
+    });
+    if (games) {
+      out.push("■ " + b.label + ": " + games + " 試合（ホールド ＋" + plus + " / －" + minus + "）");
+      out.push.apply(out, lines.sort());
+    }
+    changedGames += games;
+    return hit;
+  });
+  if (apply && changedGames) {
+    SpreadsheetApp.flush();
+    invalidatePageCaches();
+    publishAllSoon();   // 試合ページ・成績（ホールド数）を作り直す
+  }
+  const msg = (apply ? "ホールドを付け直しました" : "ホールドが変わる試合（まだ変更していません）") +
+    ": " + changedGames + " 試合（日付シートで数えています。全試合経過・月間の経過シートも同じように直します）\n" +
+    out.join("\n") +
+    (stopped ? "\n\n※ 時間切れで「" + stopped + "」の手前で止めました。" +
+      (apply ? "もう一度実行すると続きから進みます（直した試合は変わらないので飛ばします）" : "一覧はここまでです") : "") +
+    (apply ? "" : "\n\n問題なければ fixHolds() を実行してください。");
   Logger.log(msg);
   return msg;
 }
