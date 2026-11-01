@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v98";
+const SITE_VER = "site v99";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -3261,7 +3261,7 @@ function commitBatched_(files, label, note) {
 // 試合を保存すると cur / その月 / career に「古くなった」印（時刻）を付ける。
 // 印は書き出し中に付け直されることがあるので、作り始めたときの時刻と同じときだけ消す
 // （書き出し中に次の試合が保存されても、その試合を取りこぼさない）。
-const PUB_VER = "7";               // ページの見た目を変えたら上げる。全ページを作り直す
+const PUB_VER = "8";               // ページの見た目を変えたら上げる。全ページを作り直す
 const PUB_DONE_KEY = "pubDone";    // { ジョブ名: PUB_VER }
 const PUB_DIRTY_KEY = "pubDirty";  // { ジョブ名: 印を付けた時刻 }
 const PUB_CUR_KEY = "pubCur";      // 途中まで進んだジョブ "名前#件数#印の時刻"
@@ -5573,6 +5573,8 @@ function renderStats(type, statId, period) {
       for (let r = 1; r < src.values.length; r++) {
         const nm = normName(src.values[r][nameCol]);
         if (!nm) continue;
+        // 成績シートの「合計」「平均」の行は選手ではないので順位に入れない（合計が1位に並んでいた）
+        if (/^(平均|合計|計|total)$/i.test(nm)) continue;
         const q = qc >= 0 ? statNum(src.values[r][qc]) : null;
         // 各シーズンは規定で絞らない。打席・投球回が空の人だけ外す
         if (def.rate && qc >= 0 && q === null) continue;
