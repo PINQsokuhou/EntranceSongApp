@@ -7,6 +7,37 @@
 // 貼り付け後は「デプロイ → デプロイを管理 → 新バージョンで更新」を忘れずに。
 // ============================================================
 
+// よく手で実行するので、エディタの関数一覧の先頭に出るよう一番上に置いている
+/**
+ * サイトを静的に書き出す。
+ * 引数なし … 古くなったページ・まだ作っていないページを、時間の許すかぎり書き出す
+ *            （普段は5分おきのトリガーが同じことをするので、手で実行しなくてよい）
+ * onlyGames … 試合シート名の配列。その試合と試合一覧だけを書く（試合の保存直後に使う）
+ */
+function publishSite(onlyGames) {
+  if (!(onlyGames && onlyGames.length)) return runPublishLocked_();
+  if (!ghToken()) return "GITHUB_TOKEN が未設定です。プロジェクトの設定 → スクリプト プロパティ に登録してください。";
+  const u = siteUrl();
+  if (!u || u.indexOf("/exec") < 0) {
+    return "公開URLが未取得のため中止しました。一度サイトを開いてから再実行してください。";
+  }
+  const started = Date.now();
+  const targets = [
+    { q: "", label: "試合一覧", make: function () { return renderIndex(); } },
+    { q: "season=", label: "試合一覧", make: function () { return renderIndex(); } }
+  ];
+  onlyGames.forEach(function (n) {
+    targets.push({ q: "view=game&sheet=" + encodeURIComponent(n), label: "試合 " + n,
+                   make: function () { return renderGame(n); } });
+  });
+  const r = withRenderMemo_(function () { return renderChunk_(targets, 0, started); });
+  const shas = commitBatched_(r.files, "試合を書き出し");
+  const msg = "書き出しました: " + r.files.length + " ページ / コミット " + (shas.join(", ") || "-") +
+    (r.failed.length ? "\n作れなかったページ:\n  " + r.failed.join("\n  ") : "");
+  Logger.log(msg);
+  return msg;
+}
+
 const ALL_GAMES = "全試合経過";   // 全試合を積み上げるシート名
 const ROSTER_SHEET = "楽曲登録";  // メンバー・楽曲の一元管理シート（タブ名）
 // 楽曲登録を別ファイルに置く場合、そのスプレッドシートIDを入れる（"" なら同じファイル内）
@@ -3519,36 +3550,6 @@ function runPublishJobs_() {
     Logger.log(msg);
     return msg;
   });
-}
-
-/**
- * サイトを静的に書き出す。
- * 引数なし … 古くなったページ・まだ作っていないページを、時間の許すかぎり書き出す
- *            （普段は5分おきのトリガーが同じことをするので、手で実行しなくてよい）
- * onlyGames … 試合シート名の配列。その試合と試合一覧だけを書く（試合の保存直後に使う）
- */
-function publishSite(onlyGames) {
-  if (!(onlyGames && onlyGames.length)) return runPublishLocked_();
-  if (!ghToken()) return "GITHUB_TOKEN が未設定です。プロジェクトの設定 → スクリプト プロパティ に登録してください。";
-  const u = siteUrl();
-  if (!u || u.indexOf("/exec") < 0) {
-    return "公開URLが未取得のため中止しました。一度サイトを開いてから再実行してください。";
-  }
-  const started = Date.now();
-  const targets = [
-    { q: "", label: "試合一覧", make: function () { return renderIndex(); } },
-    { q: "season=", label: "試合一覧", make: function () { return renderIndex(); } }
-  ];
-  onlyGames.forEach(function (n) {
-    targets.push({ q: "view=game&sheet=" + encodeURIComponent(n), label: "試合 " + n,
-                   make: function () { return renderGame(n); } });
-  });
-  const r = withRenderMemo_(function () { return renderChunk_(targets, 0, started); });
-  const shas = commitBatched_(r.files, "試合を書き出し");
-  const msg = "書き出しました: " + r.files.length + " ページ / コミット " + (shas.join(", ") || "-") +
-    (r.failed.length ? "\n作れなかったページ:\n  " + r.failed.join("\n  ") : "");
-  Logger.log(msg);
-  return msg;
 }
 
 /** 書き出しは同時に1つだけ（トリガーと手動実行が重ならないように） */
