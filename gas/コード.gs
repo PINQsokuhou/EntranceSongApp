@@ -4044,6 +4044,55 @@ function pitchCountFix_(apply) {
   return msg;
 }
 
+/**
+ * 記録の書き方の調査（書き換えはしない）。シーズンごとの全試合経過について、
+ *  - 結果の欄に出てくる書き方と回数
+ *  - 失策数の列が入っている行の結果
+ *  - 「N塁打」なのに塁打数の列が N でない行
+ *  - 結果に H・E などの英字が入った行（1H1E など）
+ * をまとめて出す。nHnE などがシーズンによってどう書かれているかを確かめるために使う。
+ */
+function recordStyleReport() {
+  const seasons = playableSeasons();
+  const books = seasons.length ? seasons.map(function (s) { return { label: s.label, book: bookById(s.id) }; })
+    : [{ label: "今シーズン", book: ss() }];
+  const out = [];
+  books.forEach(function (b) {
+    const sh = b.book.getSheetByName(ALL_GAMES);
+    if (!sh || sh.getLastRow() < 2) return;
+    const L = layoutOf(b.book);
+    const need = Math.max(L.result, L.tbases, L.errs, L.batter) + 1;
+    const v = sh.getRange(2, 1, sh.getLastRow() - 1, Math.min(need, sh.getMaxColumns())).getValues();
+    const res = {}, withErr = {}, tbDiff = {}, latin = {};
+    let n = 0;
+    function inc(m, k) { m[k] = (m[k] || 0) + 1; }
+    v.forEach(function (r) {
+      if (String(r[L.batter] || "") === "") return;
+      n++;
+      const x = String(r[L.result] == null ? "" : r[L.result]).trim() || "（空）";
+      const tb = String(r[L.tbases] == null ? "" : r[L.tbases]).trim();
+      const er = Number(r[L.errs]) || 0;
+      inc(res, x);
+      if (er > 0) inc(withErr, x + " 失策" + er);
+      const m = x.match(/^([1-4])塁打$/);
+      if (m && tb !== m[1]) inc(tbDiff, x + "→塁打数" + (tb || "空"));
+      if (/[A-Za-zＡ-Ｚａ-ｚ]/.test(x)) inc(latin, x);
+    });
+    function top(m, k) {
+      return Object.keys(m).sort(function (a, c) { return m[c] - m[a]; }).slice(0, k)
+        .map(function (s) { return s + ":" + m[s]; }).join(", ") || "なし";
+    }
+    out.push("■ " + b.label + "（" + n + " 打席・列の形=" + (L === LAYOUT_OLD ? "旧" : "新") + "）");
+    out.push("  結果: " + top(res, 30));
+    out.push("  失策数の列が入っている行: " + top(withErr, 15));
+    out.push("  N塁打なのに塁打数が違う行: " + top(tbDiff, 10));
+    out.push("  英字の入った結果: " + top(latin, 10));
+  });
+  const msg = out.join("\n");
+  Logger.log(msg);
+  return msg;
+}
+
 // 安打（「生犠打」はバントヒット）
 function isHitResult(res) { return /塁打$/.test(res) || res === "生犠打"; }
 // 三振（スリーバント失敗＝2ストライクからのバントのファールも三振に数える）
