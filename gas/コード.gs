@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v89";
+const SITE_VER = "site v90";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -3261,7 +3261,7 @@ function commitBatched_(files, label, note) {
 // 試合を保存すると cur / その月 / career に「古くなった」印（時刻）を付ける。
 // 印は書き出し中に付け直されることがあるので、作り始めたときの時刻と同じときだけ消す
 // （書き出し中に次の試合が保存されても、その試合を取りこぼさない）。
-const PUB_VER = "4";               // ページの見た目を変えたら上げる。全ページを作り直す
+const PUB_VER = "5";               // ページの見た目を変えたら上げる。全ページを作り直す
 const PUB_DONE_KEY = "pubDone";    // { ジョブ名: PUB_VER }
 const PUB_DIRTY_KEY = "pubDirty";  // { ジョブ名: 印を付けた時刻 }
 const PUB_CUR_KEY = "pubCur";      // 途中まで進んだジョブ "名前#件数#印の時刻"
@@ -5782,6 +5782,7 @@ function renderGame(name) {
   // ===== 経過（1打席ずつ）=====
   let keikaHtml = '';
   let curHalf = '';
+  const lastPitcher = { "表": "", "裏": "" };   // 守っている側ごとの直前の投手
   rows.forEach(r => {
     const top = r.tb === "表";
     const half = r.inning + r.tb;
@@ -5794,9 +5795,14 @@ function renderGame(name) {
     const kind = playKind_(r);
     const after = playAfter_(r, shortF, shortS);
     const yl = ytLink(r);
+    // 投手が替わった打席は、打者の行の下に「投手交代: 前の投手 → 次の投手」を出す（回をまたいでも）
+    const prevP = lastPitcher[r.tb];
+    const change = prevP && r.pitcher && prevP !== r.pitcher
+      ? '<div class="pchg">投手交代: ' + esc(prevP) + ' → ' + esc(r.pitcher) + '</div>' : '';
+    if (r.pitcher) lastPitcher[r.tb] = r.pitcher;
     keikaHtml += '<div class="pa"><span class="po">' + (no || '') + '</span><span class="pb">' +
       (no ? no + '番：' : '') + plink(url, r.batter) + '<span class="sit">' + situationText_(r.outs, r.bases) + '</span></span>' +
-      (yl ? '<button type="button" class="ytb" aria-label="動画のリンクを表示">▼</button>' : '') + '</div>' +
+      (yl ? '<button type="button" class="ytb" aria-label="動画のリンクを表示">▼</button>' : '') + '</div>' + change +
       '<div class="pr"><span class="pc ' + kind + '">' + (r.pitches || '') + '</span><span class="pt' + (r.rbi > 0 ? ' rbi' : '') + '">' +
       esc(playText_(r)) + (after ? ' ' + esc(after) : '') + '</span></div>' +
       (yl ? '<div class="yl" style="display:none">' + yl + '</div>' : '');
@@ -5908,6 +5914,7 @@ const GAME_CSS_ = '<style>' +
   '.ytb{margin-left:auto;flex:none;background:none;border:none;color:#9fa3ad;font-size:.85em;padding:2px 6px;cursor:pointer;' +
   'transition:transform .15s}' +
   '.ytb.open{transform:rotate(180deg)}' +
+  '.pchg{padding:7px 6px 7px 36px;border-top:1px solid #24252b;color:#3ccf7e;font-size:.9em;font-weight:700}' +
   '.yl{padding:8px 6px 10px 36px;border-top:1px solid #24252b;font-size:.9em}' +
   '.yl a{color:#ff6b6b;font-weight:700}' +
   '</style>';
@@ -6039,8 +6046,19 @@ function gameTabs_(KEY, DEF) {
   }
   var saved = null;
   try { saved = sessionStorage.getItem(KEY); } catch (e) {}
-  var first = order.indexOf(saved);
-  go(first >= 0 ? first : Math.max(0, order.indexOf(DEF)), false);
+  var first = order.indexOf(saved), start = first >= 0 ? first : Math.max(0, order.indexOf(DEF));
+  mark(start);
+  // パスワードの入り口が閉じるまでは中身が隠れていて、幅も高さも0と測られる
+  // （そのまま高さを合わせると、最初の面が高さ0で見えなくなる）。見えるようになってから合わせる
+  (function waitShown() {
+    if (!box.clientWidth) { setTimeout(waitShown, 50); return; }
+    go(start, false);
+  })();
+  // 面の中身の大きさが変わったら（文字の読み込み、表の切り替えなど）高さを合わせ直す
+  if (window.ResizeObserver) {
+    var ro = new ResizeObserver(function () { fit(); });
+    for (i = 0; i < panes.length; i++) if (panes[i]) ro.observe(panes[i]);
+  }
 
   for (i = 0; i < btns.length; i++) {
     btns[i].onclick = (function (j) { return function () { toTop(); go(j, true); }; })(i);
@@ -6082,7 +6100,9 @@ function gameTabs_(KEY, DEF) {
   var yb = document.querySelectorAll(".ytb");
   for (i = 0; i < yb.length; i++) {
     yb[i].onclick = function () {
-      var pr = this.parentNode.nextSibling, yl = pr && pr.nextSibling;
+      // 打者の行の後ろ（投手交代・結果の行の先）にあるリンクの行を探す
+      var yl = this.parentNode.nextSibling;
+      while (yl && yl.className !== "yl" && yl.className !== "pa") yl = yl.nextSibling;
       if (!yl || yl.className !== "yl") return;
       var open = yl.style.display === "none";
       yl.style.display = open ? "" : "none";
