@@ -357,6 +357,15 @@ function playRow(log){
 }
 
 // ================= 投手成績自動計算（Kotlin Scorebook.pitcherStats の簡易移植） =================
+var START_WIN_INNINGS = 4, START_WIN_OUTS = START_WIN_INNINGS * 3;   // 先発が勝ちを得る投球回
+var RELIEF_WIN_OUTS = 3;                                              // 救援が勝ちを得る投球回（1イニング）
+/** 救援の勝ち投手選び: a の方が上なら true（防御率が低い → 長く投げた → 先に登板） */
+function betterRelief(a, b){
+  var x = a.earned * b.outs, y = b.earned * a.outs;   // a.earned/a.outs < b.earned/b.outs を割り算なしで
+  if (x !== y) return x < y;
+  if (a.outs !== b.outs) return a.outs > b.outs;
+  return a.order < b.order;
+}
 function pitcherStats(logs, finalFirst, finalSecond){
   if (!logs.length) return [];
   function defTeam(tb){ return tb === '表' ? '後攻' : '先攻'; }
@@ -498,6 +507,27 @@ function pitcherStats(logs, finalFirst, finalSecond){
   if (saveName) {
     var sa = acc[saveName];
     if (!(winnerTeam && saveName !== winName && !sa.starter && sa.outs >= 1 && saveSituation(sa))) saveName = null;
+  }
+
+  // ---- 先発の投球回の条件（サークルの決まり。Kotlin Scorebook と同じ）----
+  // 先発に勝ちが付くのは4回（12アウト）以上投げたときだけ。ただし試合が4回に満たず、
+  // 先発がひとりで最後まで投げたときは先発のまま。
+  // 付かないときは、セーブの付かない救援投手のうち1イニング（3アウト）以上投げた人の中で、
+  // この試合の防御率が最も低い投手に付ける（同じなら長く投げた方、それも同じなら先に登板した方）。
+  // 当てはまる救援投手がいなければ先発のまま。
+  if (winName && acc[winName].starter && acc[winName].outs < START_WIN_OUTS) {
+    var lastInning = 0, sole = true;
+    logs.forEach(function(l){ if (l.inning > lastInning) lastInning = l.inning; });
+    for (var k5 in acc) { if (k5 !== winName && acc[k5].team === winnerTeam) sole = false; }
+    if (!(sole && lastInning < START_WIN_INNINGS)) {
+      var best = null;
+      for (var k6 in acc) {
+        var a6 = acc[k6];
+        if (a6.team !== winnerTeam || a6.starter || k6 === saveName || a6.outs < RELIEF_WIN_OUTS) continue;
+        if (!best || betterRelief(a6, acc[best])) best = k6;
+      }
+      if (best) winName = best;
+    }
   }
 
   var result = [];

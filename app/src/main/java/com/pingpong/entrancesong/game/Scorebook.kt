@@ -30,6 +30,11 @@ object Scorebook {
     const val RESULT_K_SWING = "空三振"
     const val RESULT_K_LOOK = "見三振"
 
+    /** 先発が勝ちを得るのに必要な投球回（4回 = 12アウト）と、救援が勝ちを得るのに必要なアウト数（1イニング） */
+    const val START_WIN_INNINGS = 4
+    const val START_WIN_OUTS = START_WIN_INNINGS * 3
+    const val RELIEF_WIN_OUTS = 3
+
     val SITUATION_ALL = listOf("併殺", "三塁走者アウト")
 
     /**
@@ -295,6 +300,7 @@ object Scorebook {
      *  - 失策による進塁が無ければ生還できなかった走者（nHnEの安打部分だけでは本塁に
      *    届かない走者）の得点は自責にしない
      * 【勝】勝利チームが最後に勝ち越した時点で登板していた投手（未登板なら先発）。
+     *  ただし先発は4回以上投げないと勝ちが付かない（サークルの決まり。下の「先発の投球回の条件」）。
      * 【敗】その決勝点の責任投手（走者を出塁させた投手）。
      * 【セーブ】勝利チームの最終投手で勝利投手でなく、1アウト以上を記録し、かつ登板時に
      *  (a)3点差以内のリード (b)塁上・打者・次打者に同点の走者がいる状況のリード
@@ -501,6 +507,34 @@ object Scorebook {
                 winnerTeam.isNotEmpty() && name != winName && !a.starter &&
                         a.outs >= 1 && saveSituation(a)
             }
+
+        // ── 先発の投球回の条件（サークルの決まり。ブラウザ版 record.js と同じ）──
+        // 先発に勝ちが付くのは4回（12アウト）以上投げたときだけ。ただし試合が4回に満たず、
+        // 先発がひとりで最後まで投げたときは先発のまま。
+        // 付かないときは、セーブの付かない救援投手のうち1イニング（3アウト）以上投げた人の中で、
+        // この試合の防御率が最も低い投手に付ける（同じなら長く投げた方、それも同じなら先に登板した方）。
+        // 当てはまる救援投手がいなければ先発のまま。
+        val w = winName?.let { acc[it] }
+        if (w != null && w.starter && w.outs < START_WIN_OUTS) {
+            val lastInning = logs.maxOf { it.inning }
+            val sole = acc.none { (n, a) -> n != winName && a.team == winnerTeam }
+            if (!(sole && lastInning < START_WIN_INNINGS)) {
+                val best = acc.entries
+                    .filter { (n, a) ->
+                        a.team == winnerTeam && !a.starter && n != saveName && a.outs >= RELIEF_WIN_OUTS
+                    }
+                    .sortedWith { x, y ->
+                        val a = x.value
+                        val b = y.value
+                        // 防御率の低い順（a.earned/a.outs を割り算なしで比べる）→ 長く投げた順 → 登板順
+                        (a.earned * b.outs).compareTo(b.earned * a.outs).takeIf { it != 0 }
+                            ?: b.outs.compareTo(a.outs).takeIf { it != 0 }
+                            ?: a.order.compareTo(b.order)
+                    }
+                    .firstOrNull()?.key
+                if (best != null) winName = best
+            }
+        }
 
         return acc.map { (name, a) ->
             PitcherStat(
