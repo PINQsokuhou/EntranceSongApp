@@ -40,7 +40,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v87";
+const SITE_VER = "site v88";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -1323,11 +1323,11 @@ function setSpotifyKeys() {
 
 // 全試合経過の列レイアウト（0始まりの列番号）。過去シーズンは球場・打左右・投左右・バット種類が無く左にズレる
 const LAYOUT_NEW = { stadium:1, inning:2, tb:3, outs:4, bases:5, batter:8, pitcher:10,
-  pitches:12, result:14, dir:15, btype:16, tbases:18, errs:19, nInning:20, nTb:21, nOuts:22, nSf:24, nSs:25,
-  runs:26, rbi:27, pblockName:30 };
+  pitches:12, result:14, dir:15, btype:16, tbases:18, errs:19, nInning:20, nTb:21, nOuts:22, nBases:23,
+  nSf:24, nSs:25, runs:26, rbi:27, pblockName:30 };
 const LAYOUT_OLD = { stadium:-1, inning:1, tb:2, outs:3, bases:4, batter:7, pitcher:8,
-  pitches:9, result:11, dir:12, btype:13, tbases:14, errs:15, nInning:16, nTb:17, nOuts:18, nSf:20, nSs:21,
-  runs:22, rbi:23, pblockName:26 };
+  pitches:9, result:11, dir:12, btype:13, tbases:14, errs:15, nInning:16, nTb:17, nOuts:18, nBases:19,
+  nSf:20, nSs:21, runs:22, rbi:23, pblockName:26 };
 var _layoutCache = {};
 // スプレッドシートの形式を「全試合経過」B1見出しで判別（球場=新, 回=旧）。ブック単位でキャッシュ
 function layoutOf(book) {
@@ -1362,7 +1362,7 @@ function rowObj(a, L) {
     dir: L.dir >= 0 ? String(a[L.dir] === undefined || a[L.dir] === null ? "" : a[L.dir]).replace(/\.0$/, "") : "",
     btype: s(L.btype),
     tbases: n(L.tbases), errs: n(L.errs),
-    nInning: n(L.nInning), nTb: s(L.nTb), nOuts: n(L.nOuts),
+    nInning: n(L.nInning), nTb: s(L.nTb), nOuts: n(L.nOuts), nBases: s(L.nBases),
     nSf: n(L.nSf), nSs: n(L.nSs),
     runs: n(L.runs), rbi: n(L.rbi)
   };
@@ -3142,7 +3142,7 @@ function commitBatched_(files, label, note) {
 // 試合を保存すると cur / その月 / career に「古くなった」印（時刻）を付ける。
 // 印は書き出し中に付け直されることがあるので、作り始めたときの時刻と同じときだけ消す
 // （書き出し中に次の試合が保存されても、その試合を取りこぼさない）。
-const PUB_VER = "2";               // ページの見た目を変えたら上げる。全ページを作り直す
+const PUB_VER = "3";               // ページの見た目を変えたら上げる。全ページを作り直す
 const PUB_DONE_KEY = "pubDone";    // { ジョブ名: PUB_VER }
 const PUB_DIRTY_KEY = "pubDirty";  // { ジョブ名: 印を付けた時刻 }
 const PUB_CUR_KEY = "pubCur";      // 途中まで進んだジョブ "名前#件数#印の時刻"
@@ -5572,57 +5572,49 @@ function renderGame(name) {
   }
 
   const tn = teamNames(rows);
-
-  // スコアボード（マス目表示）。チーム名は頭文字（チーム山村→山）
+  // チーム名は頭文字（チーム山村→山）。スコアボード・経過・バッテリーで使う
   var shortF = tn.f.replace(/^チーム/, "").charAt(0) || "先";
   var shortS = tn.s.replace(/^チーム/, "").charAt(0) || "後";
+
+  // スコアボード（マス目表示）。どの面でも上に出す。
+  // 回の数字を押すと「経過」のその回の攻撃へ飛ぶ（打席のある回だけ）
+  const halves = {};
+  rows.forEach(r => { halves[r.inning + r.tb] = 1; });
+  function cell(inn, tb, v) {
+    return halves[inn + tb] ? '<td class="ln" data-go="inn-' + inn + '-' + (tb === "表" ? "t" : "b") + '">' + v + '</td>'
+      : '<td>' + v + '</td>';
+  }
   let sb = '<div class="board"><table><tr><th></th>';
   for (let i = 1; i <= l.maxIn; i++) sb += '<th>' + i + '</th>';
   sb += '<th>計</th><th>安</th><th>失</th></tr>';
-  sb += '<tr><td class="tm">' + esc(shortF) + '</td>' + l.fi.map(x => '<td>' + x + '</td>').join('') +
+  sb += '<tr><td class="tm">' + esc(shortF) + '</td>' + l.fi.map((x, i) => cell(i + 1, "表", x)).join('') +
     '<td class="tot">' + l.scoreF + '</td><td>' + l.hitsF + '</td><td>' + l.errF + '</td></tr>';
-  sb += '<tr><td class="tm">' + esc(shortS) + '</td>' + l.se.map(x => '<td>' + x + '</td>').join('') +
+  sb += '<tr><td class="tm">' + esc(shortS) + '</td>' + l.se.map((x, i) => cell(i + 1, "裏", x)).join('') +
     '<td class="tot">' + l.scoreS + '</td><td>' + l.hitsS + '</td><td>' + l.errS + '</td></tr></table></div>';
-  body += sb;
 
-  // 1球速報（試合中のみ。現在の打者・カウント・投球経過）
-  if (isLive) body += live1HTML(liveState(liveSlot));
-
-  // #6 打順（スコアボードの下に両チームを2列で表示）
-  const ordF = battingOrder(rows, true), ordS = battingOrder(rows, false);
-  const rowsN = Math.max(ordF.length, ordS.length);
-  if (rowsN > 0) {
-    let ob = '<div class="tbl"><table class="order">' +
-      '<tr><th colspan="2">' + esc(tn.f) + '</th><th colspan="2">' + esc(tn.s) + '</th></tr>';
-    for (let i = 0; i < rowsN; i++) {
-      ob += '<tr>' +
-        '<td class="no">' + (ordF[i] ? (i + 1) : '') + '</td><td class="nm">' + (ordF[i] ? plink(url, ordF[i]) : '') + '</td>' +
-        '<td class="no">' + (ordS[i] ? (i + 1) : '') + '</td><td class="nm">' + (ordS[i] ? plink(url, ordS[i]) : '') + '</td>' +
-        '</tr>';
-    }
-    body += ob + '</table></div>';
-  }
+  // ===== トップ =====
+  let topHtml = '';
 
   // 責任投手（試合終了後のみ。シーズン通算の勝敗HSを併記）
   const pb = isLive ? null : pblockOf(name);
   if (pb && (pb.win || pb.loss || pb.saves.length || pb.holds.length)) {
     const srec = seasonPitcherRecords(date);
-    body += '<h2>責任投手</h2><div class="tbl"><table class="st">';
-    if (pb.win) body += '<tr><td style="width:3.2em"><span class="chip win">勝</span></td><td class="name">' +
+    topHtml += '<h2>責任投手</h2><div class="tbl"><table class="st">';
+    if (pb.win) topHtml += '<tr><td style="width:3.2em"><span class="chip win">勝</span></td><td class="name">' +
       plink(url, pb.win) + '<span class="sub">' + recStr(srec, pb.win) + '</span></td></tr>';
-    if (pb.loss) body += '<tr><td><span class="chip lose">敗</span></td><td class="name">' +
+    if (pb.loss) topHtml += '<tr><td><span class="chip lose">敗</span></td><td class="name">' +
       plink(url, pb.loss) + '<span class="sub">' + recStr(srec, pb.loss) + '</span></td></tr>';
-    pb.holds.forEach(h => body += '<tr><td><span class="chip hold">H</span></td><td class="name">' +
+    pb.holds.forEach(h => topHtml += '<tr><td><span class="chip hold">H</span></td><td class="name">' +
       plink(url, h) + '<span class="sub">' + recStr(srec, h) + '</span></td></tr>');
-    pb.saves.forEach(s => body += '<tr><td><span class="chip save">S</span></td><td class="name">' +
+    pb.saves.forEach(s => topHtml += '<tr><td><span class="chip save">S</span></td><td class="name">' +
       plink(url, s) + '<span class="sub">' + recStr(srec, s) + '</span></td></tr>');
-    body += '</table></div>';
+    topHtml += '</table></div>';
   }
 
   // 本塁打（号数はシーズン通算）
   const hrs = rows.filter(r => r.result === "4塁打");
   if (hrs.length > 0) {
-    body += '<h2>本塁打</h2><div class="tbl"><table class="st">';
+    topHtml += '<h2>本塁打</h2><div class="tbl"><table class="st">';
     hrs.forEach(hr => {
       let no = 0;
       for (let i = 0; i < seasonRows.length; i++) {
@@ -5632,22 +5624,77 @@ function renderGame(name) {
           if (sr.date === hr.date && sr.inning === hr.inning && sr.tb === hr.tb) break;
         }
       }
-      const kind = hr.runs >= 4 ? "満塁" : hr.runs === 3 ? "3ラン" : hr.runs === 2 ? "2ラン" : "ソロ";
-      body += '<tr><td class="name">' + plink(url, hr.batter) + '</td><td>' + no + '号（' +
-        hr.inning + '回' + esc(hr.tb) + kind + '）</td></tr>';
+      topHtml += '<tr><td class="name">' + plink(url, hr.batter) + '</td><td>' + no + '号（' +
+        hr.inning + '回' + esc(hr.tb) + hrKind_(hr.runs) + '）</td></tr>';
     });
-    body += '</table></div>';
+    topHtml += '</table></div>';
   }
 
   // 戦評（試合終了後のみ。Gemini APIキー設定時に自動生成し、シートにキャッシュ）
   if (!isLive) {
     const review = ensureReview(name, rows, pb);
     if (review) {
-      body += '<h2>戦評</h2><div class="card" style="line-height:1.9;font-size:.92em">' +
+      topHtml += '<h2>戦評</h2><div class="card" style="line-height:1.9;font-size:.92em">' +
         esc(review).replace(/\n/g, '<br>') + '</div>';
     }
   }
 
+  // バッテリー（捕手は記録していないので投手だけ。登板順に投球回を添える）
+  const batF = batteryOf_(rows, true), batS = batteryOf_(rows, false);
+  if (batF.length || batS.length) {
+    const line = list => list.map(p => plink(url, p.name) + '<span class="ip">(' + p.ip + ')</span>').join('、');
+    topHtml += '<h2>バッテリー</h2><div class="tbl"><table class="st">' +
+      '<tr><td class="tmc f">' + esc(shortF) + '</td><td class="name bl">' + line(batF) + '</td></tr>' +
+      '<tr><td class="tmc s">' + esc(shortS) + '</td><td class="name bl">' + line(batS) + '</td></tr></table></div>';
+  }
+
+  // 打順（両チームを2列で表示）
+  const ordF = battingOrder(rows, true), ordS = battingOrder(rows, false);
+  const rowsN = Math.max(ordF.length, ordS.length);
+  if (rowsN > 0) {
+    let ob = '<h2>打順</h2><div class="tbl"><table class="order">' +
+      '<tr><th colspan="2">' + esc(tn.f) + '</th><th colspan="2">' + esc(tn.s) + '</th></tr>';
+    for (let i = 0; i < rowsN; i++) {
+      ob += '<tr>' +
+        '<td class="no">' + (ordF[i] ? (i + 1) : '') + '</td><td class="nm">' + (ordF[i] ? plink(url, ordF[i]) : '') + '</td>' +
+        '<td class="no">' + (ordS[i] ? (i + 1) : '') + '</td><td class="nm">' + (ordS[i] ? plink(url, ordS[i]) : '') + '</td>' +
+        '</tr>';
+    }
+    topHtml += ob + '</table></div>';
+  }
+
+  // YouTube用タイムスタンプ（ブラウザ版スコアブックで記録した試合のみ。保存済みのときだけボタンを出す）
+  if (!isLive && getTsText(name)) {
+    topHtml += '<a class="card" target="_top" href="' + url + '?view=ts&sheet=' + encodeURIComponent(name) + seasonQ() + '">' +
+      '<div class="d">📋 YouTube用タイムスタンプ</div>' +
+      '<div style="font-size:.85em;color:#9fa3ad;margin-top:2px">概要欄に貼る時刻つきの一覧を開く</div></a>';
+  }
+
+  // ===== 速報（試合中のみ。現在の打者・カウント・投球経過）=====
+  const liveHtml = isLive ? (live1HTML(liveState(liveSlot)) || '<p class="sub">試合開始前です。</p>') : '';
+
+  // ===== 経過（1打席ずつ）=====
+  let keikaHtml = '';
+  let curHalf = '';
+  rows.forEach(r => {
+    const top = r.tb === "表";
+    const half = r.inning + r.tb;
+    if (half !== curHalf) {
+      curHalf = half;
+      keikaHtml += '<div class="ih ' + (top ? 'f' : 's') + '" id="inn-' + r.inning + '-' + (top ? 't' : 'b') + '">' +
+        r.inning + '回' + esc(r.tb) + ' ' + esc(top ? tn.f : tn.s) + 'の攻撃</div>';
+    }
+    const no = (top ? ordF : ordS).indexOf(r.batter) + 1;
+    const kind = playKind_(r);
+    const after = playAfter_(r, shortF, shortS);
+    keikaHtml += '<div class="pa"><span class="po">' + (no || '') + '</span><span class="pb">' +
+      (no ? no + '番：' : '') + plink(url, r.batter) + '<span class="sit">' + situationText_(r.outs, r.bases) + '</span></span></div>' +
+      '<div class="pr"><span class="pc ' + kind + '">' + (r.pitches || '') + '</span><span class="pt' + (r.rbi > 0 ? ' rbi' : '') + '">' +
+      esc(playText_(r)) + (after ? ' ' + esc(after) : '') + '</span></div>';
+  });
+  if (!keikaHtml) keikaHtml = '<p class="sub">まだ打席がありません。</p>';
+
+  // ===== 成績（打者成績と投手成績を切り替え）=====
   // 打者成績。打率は通算（表/裏を分けず、全打席を合算した「その試合終了時点」の打率）
   const seasonBat = batAllFrom(seasonRows);
   function batTable(title, top) {
@@ -5665,8 +5712,6 @@ function renderGame(name) {
     });
     return t + '</table></div>';
   }
-  body += batTable(tn.f, true);
-  body += batTable(tn.s, false);
 
   // 投手成績
   function pitTable(title, top) {
@@ -5693,17 +5738,216 @@ function renderGame(name) {
     });
     return t + '</table></div>';
   }
-  body += pitTable(tn.f, true);
-  body += pitTable(tn.s, false);
+  const statHtml = '<div class="stabs"><button type="button" data-s="bat" class="on">打者成績</button>' +
+    '<button type="button" data-s="pit">投手成績</button></div>' +
+    '<div class="gs" id="gs-bat">' + batTable(tn.f, true) + batTable(tn.s, false) + '</div>' +
+    '<div class="gs" id="gs-pit" style="display:none">' + pitTable(tn.f, true) + pitTable(tn.s, false) + '</div>';
 
-  // YouTube用タイムスタンプ（ブラウザ版スコアブックで記録した試合のみ。保存済みのときだけボタンを出す）
-  if (!isLive && getTsText(name)) {
-    body += '<a class="card" target="_top" href="' + url + '?view=ts&sheet=' + encodeURIComponent(name) + seasonQ() + '">' +
-      '<div class="d">📋 YouTube用タイムスタンプ</div>' +
-      '<div style="font-size:.85em;color:#9fa3ad;margin-top:2px">概要欄に貼る時刻つきの一覧を開く</div></a>';
+  // ===== 組み立て: 見出し → 面の切り替え → スコアボード → 各面 =====
+  // 試合中は「トップ・速報・経過・成績」、終わったら速報を消して3面
+  const tabs = [["top", "トップ"]].concat(isLive ? [["live", "速報"]] : [], [["keika", "経過"], ["seiseki", "成績"]]);
+  const panes = { top: topHtml, live: liveHtml, keika: keikaHtml, seiseki: statHtml };
+  body += GAME_CSS_ +
+    '<div class="gtabs">' + tabs.map(t => '<button type="button" data-t="' + t[0] + '">' + t[1] + '</button>').join('') + '</div>' +
+    sb +
+    tabs.map(t => '<div class="gp" id="gp-' + t[0] + '">' + panes[t[0]] + '</div>').join('') +
+    // 面の切り替え（押す・左右にスワイプ）。開いていた面は再読み込みしても覚えておく
+    '<script>(' + gameTabs_.toString() + ')(' + JSON.stringify("ppGameTab:" + name).replace(/</g, '\\u003c') + ',' +
+    JSON.stringify(isLive ? "live" : "top") + ');</script>';
+
+  // タブの題名はシート名（YYYY-MM-DD[-n]）から。セルの日付は Date になっていることがある
+  return page((nm ? name : dateStr) + ' の試合', body, isLive);
+}
+
+// ---- 試合ページの部品 ----
+const GAME_CSS_ = '<style>' +
+  '.gtabs{display:flex;border-bottom:1px solid #26272e;margin:0 -12px 10px;position:sticky;top:0;background:#0d0d10;z-index:5}' +
+  '.gtabs button{flex:1;background:none;border:none;color:#cfd2da;font-size:.95em;padding:11px 0;cursor:pointer;' +
+  'border-bottom:3px solid transparent;font-family:inherit}' +
+  '.gtabs button+button{border-left:1px solid #26272e}' +
+  '.gtabs button.on{color:#f5a623;border-bottom-color:#f5a623;font-weight:700}' +
+  '.board td.ln{cursor:pointer}' +
+  '.ih{background:#1e2026;border-left:4px solid #2f6fdd;padding:9px 10px;margin:14px 0 0;font-size:.92em;font-weight:700;scroll-margin-top:52px}' +
+  '.ih.s{border-left-color:#f5a623}' +
+  '.pa{display:flex;align-items:center;gap:8px;padding:8px 6px;border-top:1px solid #24252b;background:#15161b}' +
+  '.pa .po{width:1.4em;text-align:center;color:#9fa3ad}' +
+  '.pa .sit{margin-left:10px;color:#cfd2da}' +
+  '.pr{display:flex;align-items:flex-start;gap:8px;padding:8px 6px;border-top:1px solid #24252b}' +
+  '.pc{flex:none;width:22px;height:22px;border-radius:50%;color:#fff;font-size:.75em;font-weight:700;' +
+  'display:flex;align-items:center;justify-content:center;margin-top:1px}' +
+  '.pc.out{background:#e5484d}.pc.walk{background:#18b56a}.pc.hit{background:#2f6fdd}' +
+  '.pt{line-height:1.6}.pt.rbi{color:#f5b82e}' +
+  '.tmc{width:2.4em;font-weight:700;border-left:4px solid #2f6fdd}.tmc.s{border-left-color:#f5a623}' +
+  '.st .name.bl{white-space:normal;line-height:1.7}' +
+  '.ip{color:#9fa3ad;margin-left:2px}' +
+  '.stabs{display:flex;margin:10px 0 4px;border-bottom:1px solid #26272e}' +
+  '.stabs button{flex:1;background:none;border:none;color:#9fa3ad;font-size:.92em;padding:9px 0;cursor:pointer;' +
+  'border-bottom:3px solid transparent;font-family:inherit}' +
+  '.stabs button.on{color:#f5a623;border-bottom-color:#f5a623;font-weight:700}' +
+  '</style>';
+
+/** 本塁打の種類（打点ではなく、その打席で入った点数で決める） */
+function hrKind_(runs) {
+  return runs >= 4 ? "満塁" : runs === 3 ? "3ラン" : runs === 2 ? "2ラン" : "ソロ";
+}
+
+/** 塁の表示（"一塁"〜"満塁"）。走者なしは "" */
+function basesText_(label) {
+  const s = String(label || "").trim();
+  return (!s || s === "無塁" || s === "なし" || s === "走者なし") ? "" : s;
+}
+
+/** 打席前の状況（例: 一死一塁、無死走者なし） */
+function situationText_(outs, bases) {
+  return (["無死", "一死", "二死"][outs] || "") + (basesText_(bases) || "走者なし");
+}
+
+/** 球数の丸の色分け: アウト=赤 / 四死球=緑 / 安打・エラー=青 */
+function playKind_(r) {
+  if (isHitResult(r.result) || r.result === "失策") return "hit";
+  if (r.result === "四球" || r.result === "死球" || r.result === "妨害") return "walk";
+  return "out";
+}
+
+// 打球方向（0=投 1=左 2=左中 3=中 4=右中 5=右 6=邪）
+const DIR_NAME_ = { "0": "ピッチャー", "1": "レフト", "2": "左中間", "3": "センター", "4": "右中間", "5": "ライト", "6": "ファウルゾーン" };
+
+/** 打席の結果を文章にする（例: レフトへの2ランホームラン、セカンド…ではなく方向で「レフトフライ」） */
+function playText_(r) {
+  const res = r.result, d = DIR_NAME_[r.dir] || "";
+  const to = d ? d + "への" : "";
+  const hits = { "1塁打": "ヒット", "2塁打": "ツーベースヒット", "3塁打": "スリーベースヒット" };
+  const err = r.errs > 0 ? "とエラー" : "";
+  if (res === "4塁打") return to + hrKind_(r.runs) + "ホームラン" + err;
+  if (hits[res]) return to + hits[res] + err;
+  switch (res) {
+    case "四球": return "フォアボールを選ぶ";
+    case "死球": return "デッドボール";
+    case "妨害": return "打撃妨害で出塁";
+    case "空三振": return "空振り三振";
+    case "見三振": return "見逃し三振";
+    case "失策": return (d ? d + "の" : "") + "エラーで出塁";
+    case "犠飛": return to + "犠牲フライ";
+    case "犠打": return "送りバント";
+    case "スクイズ": return "スクイズ";
+    case "併殺": return to + "併殺打";
   }
+  if (res === "ゴロ" || res === "フライ" || res === "ライナー") {
+    if (!d) return res;
+    if (r.dir === "6") return "ファウル" + res;
+    if (r.dir === "2" || r.dir === "4") return d + "への" + res;
+    return d + res;   // レフトフライ・ピッチャーゴロ
+  }
+  return res || "-";
+}
 
-  return page(date + ' の試合', body, isLive);
+/** 結果のあとの状況（例: 1アウト、一塁、3アウト）と、点が入ったときのスコア */
+function playAfter_(r, shortF, shortS) {
+  const ended = r.nTb !== r.tb || r.nInning !== r.inning;
+  const added = outsAddedOf(r);
+  let t;
+  if (ended && added > 0) t = "3アウト";
+  else {
+    const b = basesText_(r.nBases);
+    t = (added > 0 ? r.nOuts + "アウト" : "") + (b || (added > 0 || r.runs > 0 ? "" : "走者なし"));
+  }
+  if (r.runs > 0) t += (t ? " " : "") + shortF + " " + r.nSf + "-" + r.nSs + " " + shortS;
+  return t;
+}
+
+/**
+ * バッテリー欄の投手（登板順）と投球回。top=true→先攻チームの投手（裏の行）。
+ * 回を投げ切って降板したら "5"、次の回に登板して1アウトも取れずに降板したら "5.0"、
+ * 途中のアウトは "5.1" "5.2"。
+ */
+function batteryOf_(rows, top) {
+  const map = {}, order = [];
+  rows.forEach(r => {
+    if ((r.tb === "裏") !== top || !r.pitcher) return;
+    let p = map[r.pitcher];
+    if (!p) { p = map[r.pitcher] = { outs: 0, half: "", halfOuts: 0 }; order.push(r.pitcher); }
+    const h = r.inning + r.tb;
+    if (p.half !== h) { p.half = h; p.halfOuts = 0; }   // 最後に投げた回のアウト数だけ数え直す
+    const a = outsAddedOf(r);
+    p.outs += a; p.halfOuts += a;
+  });
+  return order.map(n => {
+    const p = map[n], whole = Math.floor(p.outs / 3), part = p.outs % 3;
+    return { name: n, ip: part ? whole + "." + part : (p.halfOuts === 0 ? whole + ".0" : String(whole)) };
+  });
+}
+
+/** 試合ページの面の切り替え（ページに埋め込んで使う。古い端末でも動くよう ES5 で書く） */
+function gameTabs_(KEY, DEF) {
+  var bar = document.querySelector(".gtabs");
+  if (!bar) return;
+  var btns = bar.querySelectorAll("button"), order = [], cur = null, i;
+  for (i = 0; i < btns.length; i++) order.push(btns[i].getAttribute("data-t"));
+  function show(t) {
+    if (order.indexOf(t) < 0) t = DEF;
+    cur = t;
+    for (var k = 0; k < order.length; k++) {
+      btns[k].className = order[k] === t ? "on" : "";
+      var p = document.getElementById("gp-" + order[k]);
+      if (p) p.style.display = order[k] === t ? "" : "none";
+    }
+    try { sessionStorage.setItem(KEY, t); } catch (e) {}
+  }
+  function toTop() {   // 下の方にいたら、面の切り替えの位置まで戻す
+    var y = bar.getBoundingClientRect().top + window.pageYOffset;
+    if (window.pageYOffset > y) window.scrollTo(0, y);
+  }
+  var saved = null;
+  try { saved = sessionStorage.getItem(KEY); } catch (e) {}
+  show(saved || DEF);
+  for (i = 0; i < btns.length; i++) {
+    btns[i].onclick = (function (t) { return function () { show(t); toTop(); }; })(order[i]);
+  }
+  // スコアボードの回の数字 → 経過のその回へ
+  var cells = document.querySelectorAll("[data-go]");
+  for (i = 0; i < cells.length; i++) {
+    cells[i].onclick = function () {
+      show("keika");
+      var el = document.getElementById(this.getAttribute("data-go"));
+      // 上に貼り付いている面の切り替えに隠れないよう、その高さぶん手前で止める
+      if (el) window.scrollTo(0, el.getBoundingClientRect().top + window.pageYOffset - bar.offsetHeight - 4);
+    };
+  }
+  // 成績の中の「打者成績／投手成績」
+  var sb = document.querySelectorAll(".stabs button");
+  for (i = 0; i < sb.length; i++) {
+    sb[i].onclick = function () {
+      for (var k = 0; k < sb.length; k++) {
+        var on = sb[k] === this;
+        sb[k].className = on ? "on" : "";
+        var g = document.getElementById("gs-" + sb[k].getAttribute("data-s"));
+        if (g) g.style.display = on ? "" : "none";
+      }
+    };
+  }
+  // 左右のスワイプで隣の面へ（横に動かせる表の上では動かさない）
+  var sx = null, sy = 0, skip = false;
+  function inScroller(el) {
+    for (; el && el !== document.body; el = el.parentNode) {
+      if (el.scrollWidth > el.clientWidth + 2) {
+        var ox = window.getComputedStyle(el).overflowX;
+        if (ox === "auto" || ox === "scroll") return true;
+      }
+    }
+    return false;
+  }
+  document.addEventListener("touchstart", function (e) {
+    if (e.touches.length !== 1) { sx = null; return; }
+    sx = e.touches[0].clientX; sy = e.touches[0].clientY; skip = inScroller(e.target);
+  }, { passive: true });
+  document.addEventListener("touchend", function (e) {
+    if (sx === null || skip) { sx = null; return; }
+    var dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy;
+    sx = null;
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 2) return;
+    var j = order.indexOf(cur) + (dx < 0 ? 1 : -1);
+    if (j >= 0 && j < order.length) { show(order[j]); toTop(); }
+  }, { passive: true });
 }
 
 // YouTube概要欄用タイムスタンプの閲覧ページ（どの端末からでも見られる・コピーできる）
