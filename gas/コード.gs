@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v91";
+const SITE_VER = "site v92";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -3261,7 +3261,7 @@ function commitBatched_(files, label, note) {
 // 試合を保存すると cur / その月 / career に「古くなった」印（時刻）を付ける。
 // 印は書き出し中に付け直されることがあるので、作り始めたときの時刻と同じときだけ消す
 // （書き出し中に次の試合が保存されても、その試合を取りこぼさない）。
-const PUB_VER = "5";               // ページの見た目を変えたら上げる。全ページを作り直す
+const PUB_VER = "6";               // ページの見た目を変えたら上げる。全ページを作り直す
 const PUB_DONE_KEY = "pubDone";    // { ジョブ名: PUB_VER }
 const PUB_DIRTY_KEY = "pubDirty";  // { ジョブ名: 印を付けた時刻 }
 const PUB_CUR_KEY = "pubCur";      // 途中まで進んだジョブ "名前#件数#印の時刻"
@@ -6075,23 +6075,27 @@ function playAfter_(r, shortF, shortS) {
 
 /**
  * バッテリー欄の投手（登板順）と投球回。top=true→先攻チームの投手（裏の行）。
+ * 一度降りて再び登板した投手は、登板ごとに分ける（例: 金田 (0.2)、野平 (0.1)、金田 (3)）。
  * 回を投げ切って降板したら "5"、次の回に登板して1アウトも取れずに降板したら "5.0"、
  * 途中のアウトは "5.1" "5.2"。
  */
 function batteryOf_(rows, top) {
-  const map = {}, order = [];
+  const stints = [];
   rows.forEach(r => {
     if ((r.tb === "裏") !== top || !r.pitcher) return;
-    let p = map[r.pitcher];
-    if (!p) { p = map[r.pitcher] = { outs: 0, half: "", halfOuts: 0 }; order.push(r.pitcher); }
+    let p = stints[stints.length - 1];
+    if (!p || p.name !== r.pitcher) {   // 投手が替わったら新しい登板
+      p = { name: r.pitcher, outs: 0, half: "", halfOuts: 0 };
+      stints.push(p);
+    }
     const h = r.inning + r.tb;
     if (p.half !== h) { p.half = h; p.halfOuts = 0; }   // 最後に投げた回のアウト数だけ数え直す
     const a = outsAddedOf(r);
     p.outs += a; p.halfOuts += a;
   });
-  return order.map(n => {
-    const p = map[n], whole = Math.floor(p.outs / 3), part = p.outs % 3;
-    return { name: n, ip: part ? whole + "." + part : (p.halfOuts === 0 ? whole + ".0" : String(whole)) };
+  return stints.map(p => {
+    const whole = Math.floor(p.outs / 3), part = p.outs % 3;
+    return { name: p.name, ip: part ? whole + "." + part : (p.halfOuts === 0 ? whole + ".0" : String(whole)) };
   });
 }
 
