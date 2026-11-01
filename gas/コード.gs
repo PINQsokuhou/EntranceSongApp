@@ -4879,11 +4879,11 @@ const CAREER_REC_NOTE = "この種目は2022年度の成績表に無い項目を
 // ---------------- 選手個人ページ ----------------
 
 // 選手名を個人ページへのリンクにする（rawモードでは url が除去され相対リンクになる）
-function plink(url, name) {
+function plink(url, name, short) {
   if (!name) return "";
-  // リンク先は正式名、表示はフルネーム（登録があれば）
+  // リンク先は正式名、表示はフルネーム（登録があれば）。short なら正式名（苗字）のまま出す
   return '<a target="_top" href="' + url + '?view=player&name=' +
-    encodeURIComponent(name) + seasonQ() + '">' + esc(displayName(name)) + '</a>';
+    encodeURIComponent(name) + seasonQ() + '">' + esc(short ? name : displayName(name)) + '</a>';
 }
 
 // 全試合経過の行を試合ごとに分割（イニングが戻る＝次の試合、日付が変わる＝次の試合）
@@ -5731,7 +5731,8 @@ function renderGame(name) {
   // バッテリー（捕手は記録していないので投手だけ。登板順に投球回を添える）
   const batF = batteryOf_(rows, true), batS = batteryOf_(rows, false);
   if (batF.length || batS.length) {
-    const line = list => list.map(p => plink(url, p.name) + '<span class="ip">(' + p.ip + ')</span>').join('、');
+    // 名前は苗字（正式名）だけ。同じ苗字の人は正式名で区別されている（谷遼・谷彬など）
+    const line = list => list.map(p => plink(url, p.name, true) + '<span class="ip">(' + p.ip + ')</span>').join('、');
     topHtml += '<h2>バッテリー</h2><div class="tbl"><table class="st">' +
       '<tr><td class="tmc f">' + esc(shortF) + '</td><td class="name bl">' + line(batF) + '</td></tr>' +
       '<tr><td class="tmc s">' + esc(shortS) + '</td><td class="name bl">' + line(batS) + '</td></tr></table></div>';
