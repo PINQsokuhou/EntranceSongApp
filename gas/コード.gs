@@ -125,10 +125,14 @@ function doGet(e) {
     h = cached(cache, sk + "pl:" + (p.name || "") + ":" + (p.period || ""), CACHE_TTL,
       function () { return renderPlayer(p.name, p.period); });
   } else if (p.view === "ts") {
-    if (p.dir) {
-      // サイト上でのズレ補正: 分秒ぶん全時刻をずらして保存し、最新を表示（キャッシュしない）
-      var sec = (parseInt(p.mm, 10) || 0) * 60 + (parseInt(p.ss, 10) || 0);
-      h = renderTsShift(p.sheet, p.dir === "minus" ? -sec : sec);
+    if (p.save) {
+      // 動画リンクとずれの登録（キャッシュしない）。ずれは足し込まず、登録した値で置き換える
+      var off = ((parseInt(p.mm, 10) || 0) * 60 + (parseInt(p.ss, 10) || 0)) * (p.sign === "minus" ? -1 : 1);
+      var yurl = String(p.yt || "").trim();
+      var bad = yurl && !youtubeIdOf_(yurl);
+      if (!bad) saveTsLink_(p.sheet, yurl, off);
+      try { cache.remove(sk + "ts:" + p.sheet); } catch (e) {}
+      h = renderTs(p.sheet, bad ? "YouTube の動画URLとして読み取れませんでした。登録していません。" : "登録しました。");
     } else {
       // 開いたときだけ専用シートを1行読む
       h = cached(cache, sk + "ts:" + p.sheet, 1800, function () { return renderTs(p.sheet); });
@@ -742,7 +746,7 @@ function sheetValuesMemo_(name, cols) {
   const sh = book.getSheetByName(name);
   if (!sh) return null;
   const n = sh.getLastRow();
-  const v = n < 1 ? [] : sh.getRange(1, 1, n, cols).getValues();
+  const v = n < 1 ? [] : sh.getRange(1, 1, n, Math.min(cols, sh.getMaxColumns())).getValues();
   if (_rowsMemo) _rowsMemo[k] = v;
   return v;
 }
@@ -750,14 +754,91 @@ function forgetSheetMemo_(name) {
   if (_rowsMemo) delete _rowsMemo["v:" + ss().getId() + "/" + name];
 }
 
-function getTsText(name) {
-  const v = sheetValuesMemo_(TS_SHEET, 2);
-  if (!v || v.length < 2) return "";
-  for (let r = 1; r < v.length; r++) {
-    // 日付として数値化された古い行も読めるように、キーを揃えてから比べる
-    if (tsKeyOf(v[r][0]) === String(name)) return String(v[r][1] || "");
+function getTsText(name) { return getTsInfo_(name).text; }
+/**
+ * タイムスタンプの行をまとめて返す。{ text: 本文, url: YouTubeの動画URL, off: ずれ（秒） }
+ * 本文は記録したときの時刻のまま持ち、表示や動画リンクのときに off だけずらす。
+ */
+function getTsInfo_(name) {
+  const v = sheetValuesMemo_(TS_SHEET, 5);
+  if (v && v.length >= 2) {
+    for (let r = 1; r < v.length; r++) {
+      // 日付として数値化された古い行も読めるように、キーを揃えてから比べる
+      if (tsKeyOf(v[r][0]) === String(name)) {
+        return { text: String(v[r][1] || ""), url: String(v[r][3] || "").trim(), off: Math.round(+v[r][4] || 0) };
+      }
+    }
   }
-  return "";
+  return { text: "", url: "", off: 0 };
+}
+
+/** タイムスタンプシートの行番号（無ければ作る） */
+function tsRowOf_(name) {
+  const book = ss();
+  let sh = book.getSheetByName(TS_SHEET);
+  if (!sh) {
+    sh = book.insertSheet(TS_SHEET, book.getNumSheets());
+    sh.getRange(1, 1, 1, 5).setValues([["試合シート名", "本文", "更新日時", "YouTube", "ずれ（秒）"]]);
+  }
+  const last = sh.getLastRow();
+  const keys = last >= 2 ? sh.getRange(2, 1, last - 1, 1).getValues() : [];
+  for (let r = 0; r < keys.length; r++) {
+    if (tsKeyOf(keys[r][0]) === String(name)) return { sh: sh, row: r + 2 };
+  }
+  // シート名（2026-08-20 など）は、そのまま書くと日付と見なされ数値になってしまう。
+  // 書式を「書式なしテキスト」にしてから入れることで文字列のまま保つ。
+  sh.getRange(last + 1, 1).setNumberFormat("@").setValue(String(name));
+  return { sh: sh, row: last + 1 };
+}
+
+/** YouTube の動画IDを取り出す（watch?v= / youtu.be / live / shorts / embed）。取れなければ "" */
+function youtubeIdOf_(url) {
+  const m = String(url || "").match(/(?:[?&]v=|youtu\.be\/|\/live\/|\/shorts\/|\/embed\/)([A-Za-z0-9_-]{11})/);
+  return m ? m[1] : "";
+}
+
+/** 動画リンクとずれを登録し、試合ページを書き出し直す */
+function saveTsLink_(name, url, off) {
+  const at = tsRowOf_(name);
+  if (!String(at.sh.getRange(1, 4).getValue())) at.sh.getRange(1, 4, 1, 2).setValues([["YouTube", "ずれ（秒）"]]);
+  at.sh.getRange(at.row, 4, 1, 2).setValues([[url, off]]);
+  forgetSheetMemo_(TS_SHEET);
+  try { CacheService.getScriptCache().remove("ts:" + name); } catch (e) {}
+  publishGamePage_(name);
+}
+
+/** 試合ページ1枚だけ作り直す（キャッシュを捨て、書き出し済みのページも差し替える） */
+function publishGamePage_(name) {
+  const sk = "S" + String(activeSeasonId()).slice(-10) + ":";
+  try { CacheService.getScriptCache().remove(sk + "g:" + name); } catch (e) {}
+  if (!ghToken()) return;
+  try {
+    const q = "view=game&sheet=" + encodeURIComponent(name) + seasonQ();
+    ghCommit_([{ path: "p/" + queryKey_(q) + ".html", content: rawHtml(renderGame(name)) }],
+      "試合ページを書き出し: " + name + " (" + SITE_VER + ")");
+  } catch (e) { Logger.log("試合ページの書き出しに失敗: " + e); }
+}
+
+/** 本文の「各選手の打席」から、打席ごとの時刻（秒）を読む。{ "表": {選手: [秒…]}, "裏": {…} } */
+function tsPaTimes_(text) {
+  const out = { "表": {}, "裏": {} };
+  let inPa = false, tb = "", who = "";
+  String(text || "").split(/\r?\n/).forEach(function (line) {
+    const s = line.trim();
+    if (s === "各選手の打席") { inPa = true; return; }
+    if (!inPa) return;
+    if (s === "先攻チーム") { tb = "表"; return; }
+    if (s === "後攻チーム") { tb = "裏"; return; }
+    if (!tb) return;
+    const t = s.match(/^(?:(\d+):)?(\d{1,2}):(\d{2})\s+第\d+打席/);
+    if (t && who) {
+      (out[tb][who] = out[tb][who] || []).push((+t[1] || 0) * 3600 + (+t[2]) * 60 + (+t[3]));
+      return;
+    }
+    const n = s.match(/^\d+\.(.+)$/);
+    if (n) who = normName(n[1]);
+  });
+  return out;
 }
 function saveTsText(name, text) {
   const book = ss();
@@ -1323,10 +1404,10 @@ function setSpotifyKeys() {
 
 // 全試合経過の列レイアウト（0始まりの列番号）。過去シーズンは球場・打左右・投左右・バット種類が無く左にズレる
 const LAYOUT_NEW = { stadium:1, inning:2, tb:3, outs:4, bases:5, batter:8, pitcher:10,
-  pitches:12, result:14, dir:15, btype:16, tbases:18, errs:19, nInning:20, nTb:21, nOuts:22, nBases:23,
+  pitches:12, count:13, result:14, dir:15, btype:16, tbases:18, errs:19, nInning:20, nTb:21, nOuts:22, nBases:23,
   nSf:24, nSs:25, runs:26, rbi:27, pblockName:30 };
 const LAYOUT_OLD = { stadium:-1, inning:1, tb:2, outs:3, bases:4, batter:7, pitcher:8,
-  pitches:9, result:11, dir:12, btype:13, tbases:14, errs:15, nInning:16, nTb:17, nOuts:18, nBases:19,
+  pitches:9, count:10, result:11, dir:12, btype:13, tbases:14, errs:15, nInning:16, nTb:17, nOuts:18, nBases:19,
   nSf:20, nSs:21, runs:22, rbi:23, pblockName:26 };
 var _layoutCache = {};
 // スプレッドシートの形式を「全試合経過」B1見出しで判別（球場=新, 回=旧）。ブック単位でキャッシュ
@@ -1347,6 +1428,13 @@ function layoutOf(book) {
   return L;
 }
 
+// 最後の1球の前のカウント（"ボール-ストライク"）。"2-1" などは日付と見なされて
+// Date で入っていることがあるので、月-日 をボール-ストライクに戻す
+function countOf_(v) {
+  if (v instanceof Date) return (v.getMonth() + 1) + "-" + v.getDate();
+  const s = String(v == null ? "" : v).replace(/^'/, "").trim();
+  return /^\d-\d$/.test(s) ? s : "";
+}
 function rowObj(a, L) {
   L = L || LAYOUT_NEW;
   function s(i) { return i >= 0 ? String(a[i] || "") : ""; }
@@ -1356,7 +1444,7 @@ function rowObj(a, L) {
     inning: n(L.inning), tb: s(L.tb), outs: n(L.outs), bases: s(L.bases),
     // 選手名はシーズンごとの表記ゆれ（冨高/冨髙、フルネーム等）を正規化して揃える
     batter: normName(s(L.batter)), pitcher: normName(s(L.pitcher)),
-    pitches: n(L.pitches), result: s(L.result),
+    pitches: n(L.pitches), count: countOf_(L.count >= 0 ? a[L.count] : ""), result: s(L.result),
     // 打球方向（0=投 1=左 2=左中 3=中 4=右中 5=右 6=邪）と打球性質（ゴロ/ライナー/フライ）。
     // 全シーズン通算の打球率に使う。方向は 0 があり得るので数値にせず文字のまま持つ
     dir: L.dir >= 0 ? String(a[L.dir] === undefined || a[L.dir] === null ? "" : a[L.dir]).replace(/\.0$/, "") : "",
@@ -5667,7 +5755,23 @@ function renderGame(name) {
   if (!isLive && getTsText(name)) {
     topHtml += '<a class="card" target="_top" href="' + url + '?view=ts&sheet=' + encodeURIComponent(name) + seasonQ() + '">' +
       '<div class="d">📋 YouTube用タイムスタンプ</div>' +
-      '<div style="font-size:.85em;color:#9fa3ad;margin-top:2px">概要欄に貼る時刻つきの一覧を開く</div></a>';
+      '<div style="font-size:.85em;color:#9fa3ad;margin-top:2px">概要欄に貼る時刻の一覧・動画の登録</div></a>';
+  }
+
+  // 動画が登録されていれば、経過の各打席からその場面に飛べるようにする（時刻は登録したずれを足す）
+  const ts = isLive ? null : getTsInfo_(name);
+  const vid = ts ? youtubeIdOf_(ts.url) : "";
+  const paTimes = vid ? tsPaTimes_(ts.text) : null;
+  const paSeen = { "表": {}, "裏": {} };
+  function ytLink(r) {
+    if (!paTimes) return "";
+    const k = paSeen[r.tb][r.batter] = (paSeen[r.tb][r.batter] || 0) + 1;   // この打者の何打席目か
+    const list = (paTimes[r.tb] || {})[r.batter];
+    if (!list || list[k - 1] === undefined) return "";
+    const sec = Math.max(0, list[k - 1] + ts.off);
+    const mmss = Math.floor(sec / 60) + ":" + ("0" + (sec % 60)).slice(-2);
+    return '<a target="_blank" rel="noopener" href="https://www.youtube.com/watch?v=' + vid + '&t=' + sec + 's">' +
+      '▶ YouTube でこの打席を見る（' + mmss + '〜）</a>';
   }
 
   // ===== 速報（試合中のみ。現在の打者・カウント・投球経過）=====
@@ -5687,10 +5791,13 @@ function renderGame(name) {
     const no = (top ? ordF : ordS).indexOf(r.batter) + 1;
     const kind = playKind_(r);
     const after = playAfter_(r, shortF, shortS);
+    const yl = ytLink(r);
     keikaHtml += '<div class="pa"><span class="po">' + (no || '') + '</span><span class="pb">' +
-      (no ? no + '番：' : '') + plink(url, r.batter) + '<span class="sit">' + situationText_(r.outs, r.bases) + '</span></span></div>' +
+      (no ? no + '番：' : '') + plink(url, r.batter) + '<span class="sit">' + situationText_(r.outs, r.bases) + '</span></span>' +
+      (yl ? '<button type="button" class="ytb" aria-label="動画のリンクを表示">▼</button>' : '') + '</div>' +
       '<div class="pr"><span class="pc ' + kind + '">' + (r.pitches || '') + '</span><span class="pt' + (r.rbi > 0 ? ' rbi' : '') + '">' +
-      esc(playText_(r)) + (after ? ' ' + esc(after) : '') + '</span></div>';
+      esc(playText_(r)) + (after ? ' ' + esc(after) : '') + '</span></div>' +
+      (yl ? '<div class="yl" style="display:none">' + yl + '</div>' : '');
   });
   if (!keikaHtml) keikaHtml = '<p class="sub">まだ打席がありません。</p>';
 
@@ -5702,12 +5809,12 @@ function renderGame(name) {
     const names = Object.keys(st).sort((a, b) => st[a].order - st[b].order);
     if (names.length === 0) return '';
     let t = '<h2>' + title + ' 打者成績</h2><div class="tbl"><table class="st">' +
-      '<tr><th class="name">選手名</th><th>打率</th><th>打席</th><th>安</th><th>四死</th><th>点</th><th>本</th></tr>';
+      '<tr><th class="name">選手名</th><th>打率</th><th>打数</th><th>安</th><th>四死</th><th>点</th><th>本</th></tr>';
     names.forEach(n => {
       const b = st[n];
       const sa = seasonBat[n] || { ab: 0, h: 0 };
       t += '<tr><td class="name">' + plink(url, n) + '</td><td>' + avgStr(sa.h, sa.ab) + '</td>' +
-        '<td>' + b.pa + '</td><td>' + b.h + '</td><td>' + (b.bb + b.hbp) + '</td>' +
+        '<td>' + b.ab + '</td><td>' + b.h + '</td><td>' + (b.bb + b.hbp) + '</td>' +
         '<td>' + b.rbi + '</td><td>' + b.hr + '</td></tr>';
     });
     return t + '</table></div>';
@@ -5750,8 +5857,10 @@ function renderGame(name) {
   body += GAME_CSS_ +
     '<div class="gtabs">' + tabs.map(t => '<button type="button" data-t="' + t[0] + '">' + t[1] + '</button>').join('') + '</div>' +
     sb +
-    tabs.map(t => '<div class="gp" id="gp-' + t[0] + '">' + panes[t[0]] + '</div>').join('') +
-    // 面の切り替え（押す・左右にスワイプ）。開いていた面は再読み込みしても覚えておく
+    // 各面を横に並べ、左右にスクロールして移る
+    '<div class="gpanes" id="gpanes">' +
+    tabs.map(t => '<div class="gp" id="gp-' + t[0] + '">' + panes[t[0]] + '</div>').join('') + '</div>' +
+    // 面の切り替え（押す・左右にスクロール）。開いていた面は再読み込みしても覚えておく
     '<script>(' + gameTabs_.toString() + ')(' + JSON.stringify("ppGameTab:" + name).replace(/</g, '\\u003c') + ',' +
     JSON.stringify(isLive ? "live" : "top") + ');</script>';
 
@@ -5784,6 +5893,16 @@ const GAME_CSS_ = '<style>' +
   '.stabs button{flex:1;background:none;border:none;color:#9fa3ad;font-size:.92em;padding:9px 0;cursor:pointer;' +
   'border-bottom:3px solid transparent;font-family:inherit}' +
   '.stabs button.on{color:#f5a623;border-bottom-color:#f5a623;font-weight:700}' +
+  // 面は横並び。高さは今の面に合わせる（JS）ので、隣の面の長さで余白ができない
+  '.gpanes{display:flex;align-items:flex-start;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;' +
+  '-webkit-overflow-scrolling:touch;scrollbar-width:none;margin:0 -12px}' +
+  '.gpanes::-webkit-scrollbar{display:none}' +
+  '.gp{flex:0 0 100%;min-width:0;padding:0 12px;scroll-snap-align:start;scroll-snap-stop:always}' +
+  '.ytb{margin-left:auto;flex:none;background:none;border:none;color:#9fa3ad;font-size:.85em;padding:2px 6px;cursor:pointer;' +
+  'transition:transform .15s}' +
+  '.ytb.open{transform:rotate(180deg)}' +
+  '.yl{padding:8px 6px 10px 36px;border-top:1px solid #24252b;font-size:.9em}' +
+  '.yl a{color:#ff6b6b;font-weight:700}' +
   '</style>';
 
 /** 本塁打の種類（打点ではなく、その打席で入った点数で決める） */
@@ -5818,8 +5937,9 @@ function playText_(r) {
   const to = d ? d + "への" : "";
   const hits = { "1塁打": "ヒット", "2塁打": "ツーベースヒット", "3塁打": "スリーベースヒット" };
   const err = r.errs > 0 ? "とエラー" : "";
-  if (res === "4塁打") return to + hrKind_(r.runs) + "ホームラン" + err;
-  if (hits[res]) return to + hits[res] + err;
+  const cnt = r.count ? r.count + "から" : "";   // 安打だけ「1-0から」を付ける
+  if (res === "4塁打") return cnt + to + hrKind_(r.runs) + "ホームラン" + err;
+  if (hits[res]) return cnt + to + hits[res] + err;
   switch (res) {
     case "四球": return "フォアボールを選ぶ";
     case "死球": return "デッドボール";
@@ -5877,21 +5997,32 @@ function batteryOf_(rows, top) {
   });
 }
 
-/** 試合ページの面の切り替え（ページに埋め込んで使う。古い端末でも動くよう ES5 で書く） */
+/**
+ * 試合ページの面の切り替え（ページに埋め込んで使う。古い端末でも動くよう ES5 で書く）。
+ * 面は横に並んでいて、左右にスクロールすると隣の面に移る。上のボタンを押しても移る。
+ */
 function gameTabs_(KEY, DEF) {
-  var bar = document.querySelector(".gtabs");
-  if (!bar) return;
-  var btns = bar.querySelectorAll("button"), order = [], cur = null, i;
-  for (i = 0; i < btns.length; i++) order.push(btns[i].getAttribute("data-t"));
-  function show(t) {
-    if (order.indexOf(t) < 0) t = DEF;
-    cur = t;
-    for (var k = 0; k < order.length; k++) {
-      btns[k].className = order[k] === t ? "on" : "";
-      var p = document.getElementById("gp-" + order[k]);
-      if (p) p.style.display = order[k] === t ? "" : "none";
-    }
-    try { sessionStorage.setItem(KEY, t); } catch (e) {}
+  var bar = document.querySelector(".gtabs"), box = document.getElementById("gpanes");
+  if (!bar || !box) return;
+  var btns = bar.querySelectorAll("button"), order = [], panes = [], cur = -1, i;
+  for (i = 0; i < btns.length; i++) {
+    order.push(btns[i].getAttribute("data-t"));
+    panes.push(document.getElementById("gp-" + order[i]));
+  }
+  // 箱の高さを今の面に合わせる（隣の面が長くても下に余白が出ないように）
+  function fit() { if (panes[cur]) box.style.height = panes[cur].offsetHeight + "px"; }
+  function mark(j) {
+    if (j === cur || j < 0 || j >= order.length) return;
+    cur = j;
+    for (var k = 0; k < btns.length; k++) btns[k].className = k === j ? "on" : "";
+    try { sessionStorage.setItem(KEY, order[j]); } catch (e) {}
+  }
+  function go(j, smooth) {
+    mark(j);
+    var x = cur * box.clientWidth;
+    if (smooth && box.scrollTo) box.scrollTo({ left: x, behavior: "smooth" });
+    else box.scrollLeft = x;
+    fit();
   }
   function toTop() {   // 下の方にいたら、面の切り替えの位置まで戻す
     var y = bar.getBoundingClientRect().top + window.pageYOffset;
@@ -5899,15 +6030,27 @@ function gameTabs_(KEY, DEF) {
   }
   var saved = null;
   try { saved = sessionStorage.getItem(KEY); } catch (e) {}
-  show(saved || DEF);
+  var first = order.indexOf(saved);
+  go(first >= 0 ? first : Math.max(0, order.indexOf(DEF)), false);
+
   for (i = 0; i < btns.length; i++) {
-    btns[i].onclick = (function (t) { return function () { show(t); toTop(); }; })(order[i]);
+    btns[i].onclick = (function (j) { return function () { toTop(); go(j, true); }; })(i);
   }
+  // 指で横に動かしたとき: 動かしている間にボタンの色を変え、止まったら高さを合わせる
+  var timer = null;
+  box.addEventListener("scroll", function () {
+    var j = Math.round(box.scrollLeft / Math.max(1, box.clientWidth));
+    if (j !== cur) { mark(j); toTop(); }
+    clearTimeout(timer);
+    timer = setTimeout(fit, 120);
+  }, { passive: true });
+  window.addEventListener("resize", function () { box.scrollLeft = cur * box.clientWidth; fit(); });
+
   // スコアボードの回の数字 → 経過のその回へ
   var cells = document.querySelectorAll("[data-go]");
   for (i = 0; i < cells.length; i++) {
     cells[i].onclick = function () {
-      show("keika");
+      go(order.indexOf("keika"), false);
       var el = document.getElementById(this.getAttribute("data-go"));
       // 上に貼り付いている面の切り替えに隠れないよう、その高さぶん手前で止める
       if (el) window.scrollTo(0, el.getBoundingClientRect().top + window.pageYOffset - bar.offsetHeight - 4);
@@ -5923,31 +6066,21 @@ function gameTabs_(KEY, DEF) {
         var g = document.getElementById("gs-" + sb[k].getAttribute("data-s"));
         if (g) g.style.display = on ? "" : "none";
       }
+      fit();
     };
   }
-  // 左右のスワイプで隣の面へ（横に動かせる表の上では動かさない）
-  var sx = null, sy = 0, skip = false;
-  function inScroller(el) {
-    for (; el && el !== document.body; el = el.parentNode) {
-      if (el.scrollWidth > el.clientWidth + 2) {
-        var ox = window.getComputedStyle(el).overflowX;
-        if (ox === "auto" || ox === "scroll") return true;
-      }
-    }
-    return false;
+  // 経過の ▼ → その打席の動画リンクを出す／しまう
+  var yb = document.querySelectorAll(".ytb");
+  for (i = 0; i < yb.length; i++) {
+    yb[i].onclick = function () {
+      var pr = this.parentNode.nextSibling, yl = pr && pr.nextSibling;
+      if (!yl || yl.className !== "yl") return;
+      var open = yl.style.display === "none";
+      yl.style.display = open ? "" : "none";
+      this.className = open ? "ytb open" : "ytb";
+      fit();
+    };
   }
-  document.addEventListener("touchstart", function (e) {
-    if (e.touches.length !== 1) { sx = null; return; }
-    sx = e.touches[0].clientX; sy = e.touches[0].clientY; skip = inScroller(e.target);
-  }, { passive: true });
-  document.addEventListener("touchend", function (e) {
-    if (sx === null || skip) { sx = null; return; }
-    var dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy;
-    sx = null;
-    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 2) return;
-    var j = order.indexOf(cur) + (dx < 0 ? 1 : -1);
-    if (j >= 0 && j < order.length) { show(order[j]); toTop(); }
-  }, { passive: true });
 }
 
 // YouTube概要欄用タイムスタンプの閲覧ページ（どの端末からでも見られる・コピーできる）
@@ -5971,37 +6104,41 @@ function shiftTsText(text, deltaSec) {
   }).join("\n");
 }
 
-// サイト上でのズレ補正を保存してから表示
-function renderTsShift(name, deltaSec) {
-  var text = getTsText(name);
-  if (text && deltaSec) { saveTsText(name, shiftTsText(text, deltaSec)); }
-  return renderTs(name);
-}
-
-function renderTs(name) {
+function renderTs(name, notice) {
   const url = siteUrl();
   const back = '<div class="top"><a target="_top" href="' + url + '?view=game&sheet=' +
-    encodeURIComponent(name) + '">‹ 試合へ戻る</a></div>';
-  const text = getTsText(name);
+    encodeURIComponent(name) + seasonQ() + '">‹ 試合へ戻る</a></div>';
+  const info = getTsInfo_(name);
   let body = back + '<h1>📋 YouTube用タイムスタンプ</h1>';
-  if (!text) {
+  if (!info.text) {
     body += '<p class="sub">この試合はタイムスタンプが保存されていません。' +
-      'ブラウザ版スコアブックで記録・保存した試合のみ表示されます。</p>';
+      'スコアブックで記録・保存した試合のみ表示されます。</p>';
     return page("タイムスタンプ", body, false);
   }
-  // ズレ補正フォーム（全時刻を＋遅らせる / −早める。GETフォームなのでラッパー経由でも動く）
-  body += '<div class="card"><div class="d">⏱ ズレ補正（動画と時刻を合わせる）</div>' +
-    '<div class="sub" style="margin:4px 0 8px">動画内で試合開始が 0:00 より後なら「＋遅らせる」、前なら「−早める」。全時刻をまとめてずらします。</div>' +
-    '<form method="get" action="' + url + '" target="_top" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
+  // 動画の登録（GETフォームなのでラッパー経由でも動く）。
+  // ずれは「登録した値」で置き換える。概要欄用の時刻と、試合ページ「経過」の動画リンクの両方に効く
+  const a = Math.abs(info.off);
+  body += (notice ? '<p class="sub" style="color:#ffd479">' + esc(notice) + '</p>' : '') +
+    '<div class="card"><div class="d">🎬 YouTube の動画とずれ</div>' +
+    '<div class="sub" style="margin:4px 0 8px">動画のURLを登録すると、試合ページの「経過」から各打席の場面に飛べます。' +
+    '動画の中で試合開始が 0:00 より後なら「＋」、前なら「−」で、そのずれを入れてください。</div>' +
+    '<form method="get" action="' + url + '" target="_top">' +
     '<input type="hidden" name="view" value="ts">' + seasonHidden() +
     '<input type="hidden" name="sheet" value="' + esc(name) + '">' +
-    '<input name="mm" type="number" value="0" min="0" style="width:4.5em" aria-label="分"> 分' +
-    '<input name="ss" type="number" value="0" min="0" max="59" style="width:4.5em" aria-label="秒"> 秒' +
-    '<button name="dir" value="plus" class="tsbtn">＋ 遅らせる</button>' +
-    '<button name="dir" value="minus" class="tsbtn">− 早める</button>' +
+    '<input type="hidden" name="save" value="1">' +
+    '<input name="yt" type="url" value="' + esc(info.url) + '" placeholder="https://www.youtube.com/watch?v=…" ' +
+    'class="tsin" style="width:100%;margin-bottom:8px" aria-label="YouTubeの動画URL">' +
+    '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">ずれ ' +
+    '<select name="sign" class="tsin"><option value="plus"' + (info.off >= 0 ? ' selected' : '') + '>＋</option>' +
+    '<option value="minus"' + (info.off < 0 ? ' selected' : '') + '>−</option></select>' +
+    '<input name="mm" type="number" value="' + Math.floor(a / 60) + '" min="0" class="tsin" style="width:4.5em" aria-label="分"> 分' +
+    '<input name="ss" type="number" value="' + (a % 60) + '" min="0" max="59" class="tsin" style="width:4.5em" aria-label="秒"> 秒' +
+    '<button class="tsbtn" style="margin-left:auto">登録</button></div>' +
     '</form>' +
-    '<style>.tsbtn{border:none;border-radius:8px;padding:9px 12px;font-weight:700;color:#fff;' +
-    'background:#3a3d46;cursor:pointer;font-size:.9em}</style></div>';
+    '<style>.tsbtn{border:none;border-radius:8px;padding:9px 16px;font-weight:700;color:#fff;' +
+    'background:#2f6fdd;cursor:pointer;font-size:.9em}' +
+    '.tsin{background:#0d0d10;color:#e9e9ec;border:1px solid #33343c;border-radius:8px;padding:8px;font-size:.92em}</style></div>';
+  const text = shiftTsText(info.text, info.off);
   body += '<p class="sub">下の枠をタップ→「すべて選択」でコピーし、YouTubeの概要欄に貼り付けてください。</p>' +
     '<button class="btn" id="tscopy" onclick="tsCopy()" ' +
     'style="width:100%;border:none;border-radius:10px;padding:12px;font-weight:700;color:#fff;background:#2f6fdd;cursor:pointer">全文コピー</button>' +
