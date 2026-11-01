@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v99";
+const SITE_VER = "site v100";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -80,7 +80,7 @@ const SITE_PASSWORD = "pingpong";
 // 試合一覧ページに「アプリをダウンロード」ボタンが出る。空なら非表示。
 const APK_URL = "";
 // 配布中のアプリのバージョン（app/build.gradle.kts の versionName と合わせる）。カードに表示するだけ
-const APK_VER = "3.6";
+const APK_VER = "3.7";
 
 // 率系ランキング（打率・防御率など）の規定ライン
 //
@@ -4050,6 +4050,7 @@ function pitchCountFix_(apply) {
 //  - 登板したときにリードしていて、3点差以内／同点の走者が塁上・打席・次打者にいる／
 //    その登板で3イニング以上投げた、のどれか
 //  - その登板でアウトを1つ以上取り、投げている間リードを守った（同点・逆転されていない）
+//  - 同点で登板した場合は、アウトを1つ以上取って点を与えずに降板すれば付く
 //  - 負けたチーム・引き分けの試合の投手にも付く。再登板は登板ごとに見て、どれか1回で満たせばよい
 // 勝ち・負け・セーブは記録されているものをそのまま使い、ホールドの列だけを書き換える。
 // 対象: HOLD_FIX_FROM 以降の試合の、日付シート・全試合経過・月間の経過シート（右側の投手成績の欄）
@@ -4080,20 +4081,23 @@ function holdsOfGame_(v, rows, L, exclude) {
     if (!st || st.p !== p) {                                 // 投手が替わったら新しい登板
       const sf = Number(v[r][L.sf]) || 0, ss = Number(v[r][L.ss]) || 0;
       st = { p: p, team: team, lead: team === "先攻" ? sf - ss : ss - sf,
-             runners: runnersOfLabel_(v[r][L.bases]), outs: 0, kept: true };
+             runners: runnersOfLabel_(v[r][L.bases]), outs: 0, kept: true, runs: 0 };
       stints.push(st);
       lastOf[team] = st;
     }
     const ro = { tb: tb, inning: Number(v[r][L.inning]) || 0, outs: Number(v[r][L.outs]) || 0,
                  nTb: String(v[r][L.nTb]).trim(), nInning: Number(v[r][L.nInning]) || 0, nOuts: Number(v[r][L.nOuts]) || 0 };
     st.outs += outsAddedOf(ro);
+    st.runs += Number(v[r][L.runs]) || 0;
     const nsf = Number(v[r][L.nSf]) || 0, nss = Number(v[r][L.nSs]) || 0;
     if ((team === "先攻" ? nsf - nss : nss - nsf) <= 0) st.kept = false;
   });
   const out = [];
   stints.forEach(function (st) {
     if (st.p === starter[st.team] || exclude[st.p] || out.indexOf(st.p) >= 0) return;
-    if (st.lead < 1 || st.outs < 1 || !st.kept) return;
+    if (st.outs < 1) return;
+    if (st.lead === 0) { if (st.runs === 0) out.push(st.p); return; }   // 同点で登板して無失点
+    if (st.lead < 1 || !st.kept) return;
     if (st.lead <= 3 || st.lead <= st.runners + 2 || st.outs >= 9) out.push(st.p);
   });
   return out;

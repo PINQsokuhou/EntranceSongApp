@@ -392,7 +392,7 @@ function pitcherStats(logs, finalFirst, finalSecond){
     var team = defTeam(log.topBottom);
     var attackTeam = log.topBottom === '表' ? '先攻' : '後攻';
     var a = accOf(pitcher, team);
-    if (lastPitcherOf[team] !== pitcher) a.stints.push({ firstIdx: idx, outs: 0, leadKept: true });   // 新しい登板
+    if (lastPitcherOf[team] !== pitcher) a.stints.push({ firstIdx: idx, outs: 0, leadKept: true, runsAllowed: 0 });   // 新しい登板
     lastPitcherOf[team] = pitcher;
     var stint = a.stints[a.stints.length - 1];
     if (a.firstIdx < 0) a.firstIdx = idx;
@@ -406,7 +406,7 @@ function pitcherStats(logs, finalFirst, finalSecond){
 
     var inningEnded = log.nextTopBottom !== log.topBottom || log.nextInning !== log.inning;
     var outsAdded = inningEnded ? Math.max(0, 3 - log.outs) : Math.max(0, log.nextOuts - log.outs);
-    a.outs += outsAdded; stint.outs += outsAdded;
+    a.outs += outsAdded; stint.outs += outsAdded; stint.runsAllowed += (log.runs || 0);
 
     var hitPortion = Math.max(0, log.basesGained - log.errors);
     function wouldScoreWithoutError(base){
@@ -504,11 +504,14 @@ function pitcherStats(logs, finalFirst, finalSecond){
     for (var c = 0; c < 3; c++) if (log.bases.charAt(c) === '1') runnersOn++;
     return lead <= 3 || lead <= (runnersOn + 2) || a.outs >= 9;
   }
-  // ホールドの条件を1回の登板で満たしたか（登板時にリードしてセーブ要件の状況・1アウト以上・リードを守った）
+  // ホールドの条件を1回の登板で満たしたか（1アウト以上。リードで登板ならセーブ要件の状況でリードを守った、
+  // 同点で登板なら点を与えずに降板した。プロ野球と同じ）
   function holdStint(team, st){
     var log = logs[st.firstIdx];
     var lead = team === '先攻' ? (log.scoreFirst - log.scoreSecond) : (log.scoreSecond - log.scoreFirst);
-    if (lead < 1 || st.outs < 1 || !st.leadKept) return false;
+    if (st.outs < 1) return false;
+    if (lead === 0) return st.runsAllowed === 0;
+    if (lead < 1 || !st.leadKept) return false;
     var runnersOn = 0;
     for (var c = 0; c < 3; c++) if (log.bases.charAt(c) === '1') runnersOn++;
     return lead <= 3 || lead <= (runnersOn + 2) || st.outs >= 9;

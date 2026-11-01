@@ -307,6 +307,7 @@ object Scorebook {
      *  (c)3イニング以上投球 のいずれかを満たす。
      * 【ホールド】救援でセーブ・勝敗投手でなく、上のセーブ要件と同じ状況で
      *  リード時に登板し、1アウト以上を記録し、降板までリードを守り切った投手。
+     *  同点で登板し、1アウト以上を記録して点を与えずに降板した投手にも付く。
      *  負けたチーム・引き分けの試合の投手にも付く（サークルの決まり）。
      *  再登板した投手は登板ごとに判定し、どれか1回の登板で満たせば付く。
      */
@@ -324,6 +325,7 @@ object Scorebook {
         class Stint(val firstIdx: Int) {
             var outs = 0
             var leadKept = true
+            var runsAllowed = 0   // この登板の間に入った相手の点
         }
 
         class Acc(val team: String, val order: Int) {
@@ -388,6 +390,7 @@ object Scorebook {
                 else (log.nextOuts - log.outs).coerceAtLeast(0)
             a.outs += outsAdded
             stint.outs += outsAdded
+            stint.runsAllowed += log.runs
 
             // ── 得点の帰属（前の走者から順に生還する）──
             val hitPortion = (log.basesGained - log.errors).coerceAtLeast(0)
@@ -513,11 +516,14 @@ object Scorebook {
                     a.outs >= 9              // (c) 3イニング以上の投球
         }
 
-        /** ホールドの条件を1回の登板で満たしたか（登板時にリードしてセーブ要件の状況・1アウト以上・リードを守った） */
+        /** ホールドの条件を1回の登板で満たしたか（1アウト以上。リードで登板ならセーブ要件の状況でリードを守った、同点で登板なら無失点） */
         fun holdStint(team: String, s: Stint): Boolean {
             val log = logs[s.firstIdx]
             val lead = if (team == "先攻") log.scoreFirst - log.scoreSecond else log.scoreSecond - log.scoreFirst
-            if (lead < 1 || s.outs < 1 || !s.leadKept) return false
+            if (s.outs < 1) return false
+            // 同点で登板: 点を与えずに降板すれば付く（プロ野球と同じ）
+            if (lead == 0) return s.runsAllowed == 0
+            if (lead < 1 || !s.leadKept) return false
             val runnersOn = log.bases.count { it == '1' }
             return lead <= 3 || lead <= runnersOn + 2 || s.outs >= 9
         }
