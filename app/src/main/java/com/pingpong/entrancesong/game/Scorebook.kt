@@ -305,8 +305,10 @@ object Scorebook {
      * 【セーブ】勝利チームの最終投手で勝利投手でなく、1アウト以上を記録し、かつ登板時に
      *  (a)3点差以内のリード (b)塁上・打者・次打者に同点の走者がいる状況のリード
      *  (c)3イニング以上投球 のいずれかを満たす。
-     * 【ホールド】勝利チームの救援でセーブ・勝敗投手でなく、上のセーブ要件と同じ状況で
+     * 【ホールド】救援でセーブ・勝敗投手でなく、上のセーブ要件と同じ状況で
      *  リード時に登板し、1アウト以上を記録し、降板までリードを守り切った投手。
+     *  負けたチーム・引き分けの試合の投手にも付く（サークルの決まり）。
+     *  再登板した投手は登板ごとに判定し、どれか1回の登板で満たせば付く。
      */
     fun pitcherStats(
         logs: List<AtBatLog>,
@@ -318,6 +320,12 @@ object Scorebook {
         // 表 = 先攻の攻撃 → 投げているのは後攻チーム
         fun defTeam(topBottom: String) = if (topBottom == "表") "後攻" else "先攻"
 
+        /** 1回の登板（ホールドは登板ごとに判定する） */
+        class Stint(val firstIdx: Int) {
+            var outs = 0
+            var leadKept = true
+        }
+
         class Acc(val team: String, val order: Int) {
             var runs = 0            // 失点（責任走者ベース）
             var earned = 0          // 自責点
@@ -326,9 +334,11 @@ object Scorebook {
             var firstIdx = -1       // 初登板のログ位置
             var lastIdx = -1        // 最終登板のログ位置
             var leadKept = true     // 登板中にリードを失わなかったか
+            val stints = mutableListOf<Stint>() // 登板ごと（降りてまた登板したら別の登板）
         }
 
         val acc = LinkedHashMap<String, Acc>()
+        val lastPitcherOf = HashMap<String, String>() // チームごとの直前の投手（再登板の見分け用）
         var orderCounter = 0
         fun accOf(name: String, team: String): Acc = acc.getOrPut(name) {
             Acc(team, orderCounter++).also { a ->
@@ -357,6 +367,9 @@ object Scorebook {
             val a = accOf(pitcher, team)
             if (a.firstIdx < 0) a.firstIdx = idx
             a.lastIdx = idx
+            if (lastPitcherOf[team] != pitcher) a.stints.add(Stint(idx)) // 新しい登板
+            lastPitcherOf[team] = pitcher
+            val stint = a.stints.last()
 
             // イニングの切り替わりでシミュレーションをリセット
             if (log.inning != curInning || log.topBottom != curTB) {
@@ -374,6 +387,7 @@ object Scorebook {
                 if (inningEnded) (3 - log.outs).coerceAtLeast(0)
                 else (log.nextOuts - log.outs).coerceAtLeast(0)
             a.outs += outsAdded
+            stint.outs += outsAdded
 
             // ── 得点の帰属（前の走者から順に生還する）──
             val hitPortion = (log.basesGained - log.errors).coerceAtLeast(0)
@@ -443,7 +457,7 @@ object Scorebook {
             val leadAfter =
                 if (team == "先攻") log.nextScoreFirst - log.nextScoreSecond
                 else log.nextScoreSecond - log.nextScoreFirst
-            if (leadAfter <= 0) a.leadKept = false
+            if (leadAfter <= 0) { a.leadKept = false; stint.leadKept = false }
         }
 
         // ── 勝敗（決勝点 = 勝利チームが最後に勝ち越した1点）──
@@ -499,6 +513,15 @@ object Scorebook {
                     a.outs >= 9              // (c) 3イニング以上の投球
         }
 
+        /** ホールドの条件を1回の登板で満たしたか（登板時にリードしてセーブ要件の状況・1アウト以上・リードを守った） */
+        fun holdStint(team: String, s: Stint): Boolean {
+            val log = logs[s.firstIdx]
+            val lead = if (team == "先攻") log.scoreFirst - log.scoreSecond else log.scoreSecond - log.scoreFirst
+            if (lead < 1 || s.outs < 1 || !s.leadKept) return false
+            val runnersOn = log.bases.count { it == '1' }
+            return lead <= 3 || lead <= runnersOn + 2 || s.outs >= 9
+        }
+
         val saveName = acc.entries
             .filter { it.value.team == winnerTeam }
             .maxByOrNull { it.value.lastIdx }?.key
@@ -545,9 +568,10 @@ object Scorebook {
                 starter = a.starter,
                 win = name == winName,
                 loss = name == lossName && a.team != winnerTeam,
-                hold = a.team == winnerTeam && !a.starter &&
-                        name != winName && name != saveName &&
-                        a.outs >= 1 && saveSituation(a) && a.leadKept,
+                // 勝ったチームに限らない。勝ち・セーブ・負けが付いた投手には付けない
+                hold = !a.starter && name != winName && name != saveName &&
+                        !(name == lossName && a.team != winnerTeam) &&
+                        a.stints.any { holdStint(a.team, it) },
                 save = name == saveName
             )
         }

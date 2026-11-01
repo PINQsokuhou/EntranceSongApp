@@ -372,12 +372,13 @@ function pitcherStats(logs, finalFirst, finalSecond){
   function defTeam(tb){ return tb === '表' ? '後攻' : '先攻'; }
 
   var acc = {}, orderCounter = 0;
+  var lastPitcherOf = {};   // チームごとの直前の投手（再登板の見分け用）
   function accOf(name, team){
     if (!acc[name]) {
       var isFirstOfTeam = true;
       for (var k in acc) { if (acc[k].team === team) { isFirstOfTeam = false; break; } }
       acc[name] = { team: team, order: orderCounter++, runs: 0, earned: 0, starter: isFirstOfTeam,
-        outs: 0, firstIdx: -1, lastIdx: -1, leadKept: true };
+        outs: 0, firstIdx: -1, lastIdx: -1, leadKept: true, stints: [] };   // stints: 登板ごと（再登板は別の登板）
     }
     return acc[name];
   }
@@ -391,6 +392,9 @@ function pitcherStats(logs, finalFirst, finalSecond){
     var team = defTeam(log.topBottom);
     var attackTeam = log.topBottom === '表' ? '先攻' : '後攻';
     var a = accOf(pitcher, team);
+    if (lastPitcherOf[team] !== pitcher) a.stints.push({ firstIdx: idx, outs: 0, leadKept: true });   // 新しい登板
+    lastPitcherOf[team] = pitcher;
+    var stint = a.stints[a.stints.length - 1];
     if (a.firstIdx < 0) a.firstIdx = idx;
     a.lastIdx = idx;
 
@@ -402,7 +406,7 @@ function pitcherStats(logs, finalFirst, finalSecond){
 
     var inningEnded = log.nextTopBottom !== log.topBottom || log.nextInning !== log.inning;
     var outsAdded = inningEnded ? Math.max(0, 3 - log.outs) : Math.max(0, log.nextOuts - log.outs);
-    a.outs += outsAdded;
+    a.outs += outsAdded; stint.outs += outsAdded;
 
     var hitPortion = Math.max(0, log.basesGained - log.errors);
     function wouldScoreWithoutError(base){
@@ -466,7 +470,7 @@ function pitcherStats(logs, finalFirst, finalSecond){
     }
 
     var leadAfter = (team === '先攻') ? (log.nextScoreFirst - log.nextScoreSecond) : (log.nextScoreSecond - log.nextScoreFirst);
-    if (leadAfter <= 0) a.leadKept = false;
+    if (leadAfter <= 0) { a.leadKept = false; stint.leadKept = false; }
   });
 
   var winnerTeam = finalFirst > finalSecond ? '先攻' : (finalSecond > finalFirst ? '後攻' : '');
@@ -499,6 +503,15 @@ function pitcherStats(logs, finalFirst, finalSecond){
     var log = logs[a.firstIdx], runnersOn = 0;
     for (var c = 0; c < 3; c++) if (log.bases.charAt(c) === '1') runnersOn++;
     return lead <= 3 || lead <= (runnersOn + 2) || a.outs >= 9;
+  }
+  // ホールドの条件を1回の登板で満たしたか（登板時にリードしてセーブ要件の状況・1アウト以上・リードを守った）
+  function holdStint(team, st){
+    var log = logs[st.firstIdx];
+    var lead = team === '先攻' ? (log.scoreFirst - log.scoreSecond) : (log.scoreSecond - log.scoreFirst);
+    if (lead < 1 || st.outs < 1 || !st.leadKept) return false;
+    var runnersOn = 0;
+    for (var c = 0; c < 3; c++) if (log.bases.charAt(c) === '1') runnersOn++;
+    return lead <= 3 || lead <= (runnersOn + 2) || st.outs >= 9;
   }
 
   var saveName = null, bestLastIdx = -1;
@@ -538,8 +551,11 @@ function pitcherStats(logs, finalFirst, finalSecond){
       name: k4, team: a4.team, runs: a4.runs, earnedRuns: a4.earned, starter: a4.starter,
       win: k4 === winName,
       loss: (k4 === lossName && a4.team !== winnerTeam),
-      hold: (a4.team === winnerTeam && !a4.starter && k4 !== winName && k4 !== saveName &&
-        a4.outs >= 1 && saveSituation(a4) && a4.leadKept),
+      // ホールドは負けたチーム・引き分けの投手にも付く。再登板はどれか1回の登板で満たせばよい。
+      // 勝ち・セーブ・負けが付いた投手には付けない（Kotlin Scorebook と同じ）
+      hold: (!a4.starter && k4 !== winName && k4 !== saveName &&
+        !(k4 === lossName && a4.team !== winnerTeam) &&
+        a4.stints.some(function(st){ return holdStint(a4.team, st); })),
       save: (k4 === saveName)
     });
   }
