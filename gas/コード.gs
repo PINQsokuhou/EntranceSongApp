@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v93";
+const SITE_VER = "site v94";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -3265,6 +3265,7 @@ const PUB_VER = "6";               // ページの見た目を変えたら上げ
 const PUB_DONE_KEY = "pubDone";    // { ジョブ名: PUB_VER }
 const PUB_DIRTY_KEY = "pubDirty";  // { ジョブ名: 印を付けた時刻 }
 const PUB_CUR_KEY = "pubCur";      // 途中まで進んだジョブ "名前#件数#印の時刻"
+const PUB_GEN_KEY = "pubGen";      // publishAllSoon を呼んだ回数（書き出し中に呼ばれたかの見分け用）
 const PUB_PAST_PLAYERS_KEY = "pubPastPlayers";   // 過去シーズンの選手名（変わらないので控える）
 const PUB_REVIEW_KEY = "pubReviewTries";         // 戦評を作ろうとした回数 { 試合: 回数 }
 const PUB_BUDGET_MS = 3.5 * 60 * 1000;           // 1回の実行で書き出しに使う時間（上限は6分）
@@ -3467,6 +3468,8 @@ function runPublishJobs_() {
   props.deleteProperty("pubIdx");
 
   return withRenderMemo_(function () {
+    // 書き出しの途中で publishAllSoon（全部作り直し）が呼ばれたかを、終わったときに見分ける
+    const gen = String(props.getProperty(PUB_GEN_KEY) || "");
     const done = readJsonProp_(PUB_DONE_KEY, {});
     const dirty = readJsonProp_(PUB_DIRTY_KEY, {});
     const cur = String(props.getProperty(PUB_CUR_KEY) || "").split("#");
@@ -3520,6 +3523,13 @@ function runPublishJobs_() {
       (slow.length ? "\n遅い順: " + slow.join(", ") : "");
     const shas = commitBatched_(files, "サイト静的書き出し", note);
 
+    // 書き出している間に「全部作り直し」の指示が来ていたら、今回の分は済みにしない。
+    // 始めに読んだ「済み」をそのまま書き戻すと、指示（済みを空にする）が消えて、
+    // 指示より前のデータで作ったページが済みのまま残ってしまう（球数の修正で実際に起きた）
+    if (String(props.getProperty(PUB_GEN_KEY) || "") !== gen) {
+      Logger.log("書き出しの途中で全部作り直しの指示が来たので、今回の分は済みにしません");
+      return "書き出しました（途中で全部作り直しの指示が来たので、次回から最初に戻ります）: " + files.length + " ページ";
+    }
     // 書き込めてから「済み」にする（途中で失敗したら次回やり直す）
     finished.forEach(function (f) { done[f.key] = PUB_VER; });
     props.setProperty(PUB_DONE_KEY, JSON.stringify(done));
@@ -3586,6 +3596,8 @@ function removePublishTrigger() {
  */
 function publishAllSoon() {
   const props = PropertiesService.getScriptProperties();
+  // 動いている最中の書き出しに「済みにするな」と伝える（呼ぶたびに1つ増える番号）
+  props.setProperty(PUB_GEN_KEY, String((parseInt(props.getProperty(PUB_GEN_KEY), 10) || 0) + 1));
   props.deleteProperty(PUB_DONE_KEY);
   props.deleteProperty(PUB_CUR_KEY);
   props.deleteProperty(PUB_PAST_PLAYERS_KEY);
