@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v94";
+const SITE_VER = "site v95";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -80,7 +80,7 @@ const SITE_PASSWORD = "pingpong";
 // 試合一覧ページに「アプリをダウンロード」ボタンが出る。空なら非表示。
 const APK_URL = "";
 // 配布中のアプリのバージョン（app/build.gradle.kts の versionName と合わせる）。カードに表示するだけ
-const APK_VER = "3.4";
+const APK_VER = "3.5";
 
 // 率系ランキング（打率・防御率など）の規定ライン
 //
@@ -3261,7 +3261,7 @@ function commitBatched_(files, label, note) {
 // 試合を保存すると cur / その月 / career に「古くなった」印（時刻）を付ける。
 // 印は書き出し中に付け直されることがあるので、作り始めたときの時刻と同じときだけ消す
 // （書き出し中に次の試合が保存されても、その試合を取りこぼさない）。
-const PUB_VER = "6";               // ページの見た目を変えたら上げる。全ページを作り直す
+const PUB_VER = "7";               // ページの見た目を変えたら上げる。全ページを作り直す
 const PUB_DONE_KEY = "pubDone";    // { ジョブ名: PUB_VER }
 const PUB_DIRTY_KEY = "pubDirty";  // { ジョブ名: 印を付けた時刻 }
 const PUB_CUR_KEY = "pubCur";      // 途中まで進んだジョブ "名前#件数#印の時刻"
@@ -3895,11 +3895,16 @@ function fixSacFliesDryRun() { return sacFlyFix_(false); }
 function fixSacFlies() { return sacFlyFix_(true); }
 
 function sacFlyFix_(apply) {
-  const book = ss();
-  const L = layoutOf(book);
-  const need = Math.max(L.result, L.runs, L.batter) + 1;
+  // 全シーズンのスプレッドシートを見る（以前は今シーズンだけだった）
+  const seasons = playableSeasons();
+  const books = seasons.length ? seasons.map(function (s) { return { label: s.label, book: bookById(s.id) }; })
+    : [{ label: "今シーズン", book: ss() }];
   const logs = [];
   let total = 0;
+  books.forEach(function (b) {
+  const book = b.book;
+  const L = layoutOf(book);
+  const need = Math.max(L.result, L.runs, L.batter) + 1;
   book.getSheets().forEach(function (sh) {
     const name = sh.getName();
     // 打席記録のシートだけを見る（日付シート または 「〜経過」シート）
@@ -3913,7 +3918,7 @@ function sacFlyFix_(apply) {
       if (String(v[r][L.result] || "").trim() !== "フライ") continue;
       if ((Number(v[r][L.runs]) || 0) <= 0) continue;
       hits.push(r + 1); // シート上の行番号（1始まり）
-      logs.push("  " + name + " 行" + (r + 1) + "  " + ymd(v[r][0]) + " " +
+      logs.push("  " + b.label + " / " + name + " 行" + (r + 1) + "  " + ymd(v[r][0]) + " " +
         v[r][L.batter] + "（得点" + v[r][L.runs] + "）");
     }
     if (apply) {
@@ -3921,9 +3926,11 @@ function sacFlyFix_(apply) {
     }
     total += hits.length;
   });
+  });
   if (apply && total) {
     SpreadsheetApp.flush();
     invalidatePageCaches(); // 成績の作り置きを捨てて次の表示で作り直させる
+    publishAllSoon();       // 書き出し済みの試合ページ・成績も作り直す
   }
   const msg = (apply ? "「犠飛」に書き換えました: " : "書き換え対象（まだ変更していません）: ") +
     total + " か所\n" + logs.join("\n") +
@@ -3953,7 +3960,7 @@ function fixPitchCounts() { return pitchCountFix_(true); }
  */
 function isUncountedLastPitch_(res) {
   return /^[1-4]塁打$/.test(res) ||
-    /^(ゴロ|フライ|ライナー|併殺|犠飛|犠打|スクイズ|失策|エラー|死球|妨害)$/.test(res);
+    /^(ゴロ|フライ|ライナー|併殺|犠飛|犠打|スクイズ|スク失敗|失策|エラー|死球|妨害)$/.test(res);
 }
 
 function pitchCountFix_(apply) {
@@ -4037,7 +4044,10 @@ function pitchCountFix_(apply) {
   return msg;
 }
 
-function isHitResult(res) { return /塁打$/.test(res); }
+// 安打（「生犠打」はバントヒット）
+function isHitResult(res) { return /塁打$/.test(res) || res === "生犠打"; }
+// 三振（スリーバント失敗＝2ストライクからのバントのファールも三振に数える）
+function isStrikeout_(res) { return res === "空三振" || res === "見三振" || res === "3犠打失敗"; }
 function isAtBatResult(res) {
   return !(res === "四球" || res === "死球" || res === "妨害" ||
     res === "犠飛" || res === "犠打" || res === "スクイズ");
@@ -4154,7 +4164,7 @@ function pitStats(rows, top) {
     p.outs += outsAddedOf(r);
     p.np += r.pitches;
     if (isHitResult(r.result)) p.h++;
-    if (r.result === "空三振" || r.result === "見三振") p.k++;
+    if (isStrikeout_(r.result)) p.k++;
     if (r.result === "四球") p.bb++;
     if (r.result === "死球") p.hbp++;
     p.runs += r.runs;
@@ -4193,7 +4203,7 @@ function batAllFrom(rows) {
     if (r.result === "四球") b.bb++;
     if (r.result === "死球") b.hbp++;
     if (r.result === "犠飛") b.sf++;
-    if (r.result === "空三振" || r.result === "見三振") b.so++;
+    if (isStrikeout_(r.result)) b.so++;
     b.rbi += r.rbi;
   });
   return m;
@@ -4214,7 +4224,7 @@ function pitAllFrom(rows, blockSheet, book) {
     p.np += r.pitches;
     if (isAtBatResult(r.result)) p.ab++; // 被打率の分母（対戦打数）
     if (isHitResult(r.result)) p.h++;
-    if (r.result === "空三振" || r.result === "見三振") p.k++;
+    if (isStrikeout_(r.result)) p.k++;
     if (r.result === "四球") p.bb++;
     if (r.result === "死球") p.hbp++;
   });
@@ -4675,7 +4685,7 @@ function recStatsFrom_(rows, blockSheet, book) {
       if (res !== "併殺") { b.rbi += r.rbi; b.runs += r.runs; }
       if (res === "生犠打") b.sbunt++;
       else if (res === "犠打") b.sh++;
-      else if (res === "3犠打失敗") b.b3f++;
+      else if (res === "3犠打失敗") { b.b3f++; b.so++; }   // スリーバント失敗は三振に数える
       else if (res === "スクイズ") b.sq++;
       else if (res === "スク失敗") b.sqf++;
       else if (res === "犠飛") b.sf++;
@@ -4695,6 +4705,7 @@ function recStatsFrom_(rows, blockSheet, book) {
       p.outs += outsAddedOf(r);
       if (res === "見三振") { p.kl++; p.k++; }
       else if (res === "空三振") { p.ks++; p.k++; }
+      else if (res === "3犠打失敗") p.k++;
       else if (res === "四球") p.bb++;
       else if (res === "死球") p.hbp++;
       if (res === "生犠打" || res === "犠打" || res === "スクイズ") p.sac++;
@@ -5289,7 +5300,7 @@ function renderPlayer(nameRaw, period) {
         pitched = true;
         outs += outsAddedOf(r);
         if (isHitResult(r.result)) ph++;
-        if (r.result === "空三振" || r.result === "見三振") pk++;
+        if (isStrikeout_(r.result)) pk++;
         if (r.result === "四球") pbb++;
         pruns += r.runs;
       }
@@ -6081,6 +6092,10 @@ function playText_(r) {
     case "犠飛": return to + "犠牲フライ";
     case "犠打": return "送りバント";
     case "スクイズ": return "スクイズ";
+    case "スク失敗": return "スクイズ失敗";
+    case "3犠打失敗": return "スリーバント失敗（三振）";
+    case "犠打失敗": return "送りバント失敗";
+    case "生犠打": return to + "バントヒット";
     case "併殺": return to + "併殺打";
   }
   if (res === "ゴロ" || res === "フライ" || res === "ライナー") {

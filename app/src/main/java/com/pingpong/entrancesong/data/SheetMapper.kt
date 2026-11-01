@@ -49,7 +49,9 @@ object SheetMapper {
             else (log.playResult ?: "ゴロ") // ゴロ / フライ / ライナー
         Scorebook.RESULT_ERROR -> "失策"
         Scorebook.RESULT_SAC -> "犠飛"
-        Scorebook.RESULT_SQUEEZE -> "スクイズ"
+        // 失敗は「スク失敗」（打数に数える）。アプリ以前の記録と同じ書き方にそろえる
+        Scorebook.RESULT_SQUEEZE ->
+            if (log.situations.contains("スクイズ失敗")) "スク失敗" else "スクイズ"
         Scorebook.RESULT_HBP -> "死球"
         Scorebook.RESULT_INTERFERE -> "妨害"
         Scorebook.RESULT_BB -> "四球"

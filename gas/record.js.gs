@@ -329,7 +329,8 @@ function resultCell(log){
       return log.playResult || 'ゴロ';
     case RESULT_ERROR: return '失策';
     case RESULT_SAC: return '犠飛';
-    case RESULT_SQUEEZE: return 'スクイズ';
+    // 失敗は「スク失敗」（打数に数える）。アプリ以前の記録と同じ書き方にそろえる
+    case RESULT_SQUEEZE: return log.situations.indexOf('スクイズ失敗') >= 0 ? 'スク失敗' : 'スクイズ';
     case RESULT_HBP: return '死球';
     case RESULT_INTERFERE: return '妨害';
     case RESULT_BB: return '四球';
