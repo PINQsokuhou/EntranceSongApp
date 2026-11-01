@@ -1528,7 +1528,11 @@ function confirmResult(payload){
     outs: p.outsBefore, bases: basesStrOf(p.basesBefore),
     scoreFirst: p.scoreFirstBefore, scoreSecond: p.scoreSecondBefore,
     batterName: p.batterName, batSide: payload.batSideOverride || p.batSide,
-    pitcherName: p.pitcherName, pitchSide: p.pitchSide, pitchCount: p.pitchCount, count: countStr,
+    // 球数: 四球・三振は最後の1球もボタンで押しているが、打球・死球・エラーなどは
+    // 最後の1球を押さないので、ここで1球足す（足さないと初球を打った打席が0球になる）
+    pitchCount: p.pitchCount + (p.resultType === RESULT_BB || p.resultType === RESULT_K_SWING ||
+      p.resultType === RESULT_K_LOOK ? 0 : 1),
+    pitcherName: p.pitcherName, pitchSide: p.pitchSide, count: countStr,
     result: resultLabel, resultType: p.resultType,
     direction: payload.direction, playResult: payload.playResult, ballType: payload.ballType, batType: payload.batType,
     situations: payload.situations, basesGained: payload.basesGained, errors: payload.errors,

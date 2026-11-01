@@ -697,7 +697,12 @@ object GameEngine {
                 batSide = batSideOverride ?: p.batSide,
                 pitcherName = p.pitcherName,
                 pitchSide = p.pitchSide,
-                pitchCount = p.pitchCount,
+                // 四球・三振は最後の1球もボタンで押しているが、打球・死球・エラーなどは
+                // 最後の1球を押さないので、ここで1球足す（足さないと初球を打った打席が0球になる）
+                pitchCount = p.pitchCount + when (p.resultType) {
+                    Scorebook.RESULT_BB, Scorebook.RESULT_K_SWING, Scorebook.RESULT_K_LOOK -> 0
+                    else -> 1
+                },
                 count = countStr,
                 result = resultLabel,
                 resultType = p.resultType,

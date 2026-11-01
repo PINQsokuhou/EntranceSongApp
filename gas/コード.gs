@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v90";
+const SITE_VER = "site v91";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -80,7 +80,7 @@ const SITE_PASSWORD = "pingpong";
 // 試合一覧ページに「アプリをダウンロード」ボタンが出る。空なら非表示。
 const APK_URL = "";
 // 配布中のアプリのバージョン（app/build.gradle.kts の versionName と合わせる）。カードに表示するだけ
-const APK_VER = "3.3";
+const APK_VER = "3.4";
 
 // 率系ランキング（打率・防御率など）の規定ライン
 //
@@ -3916,6 +3916,90 @@ function sacFlyFix_(apply) {
   const msg = (apply ? "「犠飛」に書き換えました: " : "書き換え対象（まだ変更していません）: ") +
     total + " か所\n" + logs.join("\n") +
     (apply ? "" : "\n\n問題なければ fixSacFlies() を実行してください。");
+  Logger.log(msg);
+  return msg;
+}
+
+// ---- 球数の数えもれを直す（一度きりの修復用）----
+// 記録アプリは「ボール・ストライク・ファール」のボタンを押した数を球数にしていたため、
+// 打球・死球・エラーなどで終わった打席は最後の1球が入っていなかった（初球を打つと0球）。
+// 四球と三振は最後の1球もボタンで押すので正しい。
+// 時期によって数え方が違い、最後の1球を数えていた時期の試合もある。そこで試合ごとに、
+// 「打球などで終わった打席に球数0がある試合」だけを、打球などの打席ぶん +1 する。
+// 初球を打つ打席は2〜3割あるので、数えていなかった試合には必ず0が出る。
+// 直した試合は0がなくなるので、もう一度実行しても二重には足さない（途中で止まっても再実行でよい）。
+// 対象: 全シーズンのスプレッドシートの、日付シート・全試合経過・月間の経過シート
+// 使い方: まず fixPitchCountsDryRun() で対象を確認 → 問題なければ fixPitchCounts() を実行。
+function fixPitchCountsDryRun() { return pitchCountFix_(false); }
+function fixPitchCounts() { return pitchCountFix_(true); }
+
+/** 最後の1球をボタンで押す結果（四球・三振）か。それ以外は最後の1球が数えもれている */
+function isCountedLastPitch_(res) {
+  return res === "四球" || /三振/.test(res);
+}
+
+function pitchCountFix_(apply) {
+  const started = Date.now();
+  const logs = [];
+  let total = 0, games = 0, stopped = "";
+  const seasons = playableSeasons();
+  const books = seasons.length ? seasons.map(function (s) { return { label: s.label, book: bookById(s.id) }; })
+    : [{ label: "今シーズン", book: ss() }];
+  books.some(function (b) {
+    const L = layoutOf(b.book);
+    const need = Math.max(L.result, L.pitches, L.batter, L.inning) + 1;
+    return b.book.getSheets().some(function (sh) {
+      if (Date.now() - started > 5 * 60 * 1000) { stopped = b.label + " " + sh.getName(); return true; }
+      const name = sh.getName();
+      // 打席記録のシートだけを見る（日付シート または 「〜経過」シート）
+      if (!/^\d{4}-?\d{2}-?\d{2}/.test(name) && name.indexOf("経過") < 0) return false;
+      const last = sh.getLastRow();
+      if (last < 2 || sh.getMaxColumns() < need) return false;
+      const v = sh.getRange(1, 1, last, need).getValues();
+      // 試合ごとに分ける（日付が変わる・回が戻る＝次の試合）
+      const groups = [];
+      let cur = null, prev = null;
+      for (let r = 1; r < v.length; r++) {
+        if (String(v[r][L.batter] || "") === "" || String(v[r][L.result] || "").trim() === "") continue;
+        const d = String(v[r][0]), inn = Number(v[r][L.inning]) || 0;
+        if (!prev || d !== prev.d || inn < prev.inn) { cur = []; groups.push(cur); }
+        cur.push(r);
+        prev = { d: d, inn: inn };
+      }
+      const col = v.map(function (row) { return [row[L.pitches]]; });
+      let changed = 0, gamesHere = 0;
+      groups.forEach(function (g) {
+        const inPlay = g.filter(function (r) { return !isCountedLastPitch_(String(v[r][L.result]).trim()); });
+        const hasZero = inPlay.some(function (r) { return (Number(v[r][L.pitches]) || 0) === 0; });
+        if (!hasZero) return;
+        inPlay.forEach(function (r) { col[r][0] = (Number(v[r][L.pitches]) || 0) + 1; });
+        changed += inPlay.length;
+        gamesHere++;
+        logs.push("  " + b.label + " / " + name + "  " + ymd(v[g[0]][0]) + "  " + inPlay.length + " 打席");
+      });
+      if (!changed) return false;
+      const rng = sh.getRange(2, L.pitches + 1, last - 1, 1);
+      // 数式の入った列は書き換えない（値だけの列のはず。念のため）
+      if (rng.getFormulas().some(function (f) { return f[0]; })) {
+        logs.push("    ※ " + name + " は球数の列に数式があるので、書き換えません");
+        return false;
+      }
+      total += changed;
+      games += gamesHere;
+      if (apply) rng.setValues(col.slice(1));
+      return false;
+    });
+  });
+  if (apply && total) {
+    SpreadsheetApp.flush();
+    invalidatePageCaches();
+    publishAllSoon();   // 試合ページ・成績（投球数）を作り直す
+  }
+  const msg = (apply ? "球数を +1 しました: " : "直す対象（まだ変更していません）: ") +
+    total + " 打席（" + games + " 試合ぶん。日付シートと経過シートの両方を数えています）\n" + logs.join("\n") +
+    (stopped ? "\n\n※ 時間切れで「" + stopped + "」の手前で止めました。" +
+      (apply ? "もう一度実行すると続きから進みます（直した試合は飛ばします）" : "一覧はここまでです") : "") +
+    (apply ? "" : "\n\n問題なければ fixPitchCounts() を実行してください。");
   Logger.log(msg);
   return msg;
 }
