@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v88";
+const SITE_VER = "site v89";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -3261,7 +3261,7 @@ function commitBatched_(files, label, note) {
 // 試合を保存すると cur / その月 / career に「古くなった」印（時刻）を付ける。
 // 印は書き出し中に付け直されることがあるので、作り始めたときの時刻と同じときだけ消す
 // （書き出し中に次の試合が保存されても、その試合を取りこぼさない）。
-const PUB_VER = "3";               // ページの見た目を変えたら上げる。全ページを作り直す
+const PUB_VER = "4";               // ページの見た目を変えたら上げる。全ページを作り直す
 const PUB_DONE_KEY = "pubDone";    // { ジョブ名: PUB_VER }
 const PUB_DIRTY_KEY = "pubDirty";  // { ジョブ名: 印を付けた時刻 }
 const PUB_CUR_KEY = "pubCur";      // 途中まで進んだジョブ "名前#件数#印の時刻"
@@ -5856,9 +5856,10 @@ function renderGame(name) {
   // 試合中は「トップ・速報・経過・成績」、終わったら速報を消して3面
   const tabs = [["top", "トップ"]].concat(isLive ? [["live", "速報"]] : [], [["keika", "経過"], ["seiseki", "成績"]]);
   const panes = { top: topHtml, live: liveHtml, keika: keikaHtml, seiseki: statHtml };
-  body += GAME_CSS_ +
+  // 「試合一覧へ」・見出し・面の切り替え・スコアボードは、下にスクロールしても上に残す
+  body = GAME_CSS_ + '<div id="gtop"></div><div class="ghead">' + body +
     '<div class="gtabs">' + tabs.map(t => '<button type="button" data-t="' + t[0] + '">' + t[1] + '</button>').join('') + '</div>' +
-    sb +
+    sb + '</div>' +
     // 各面を横に並べ、左右にスクロールして移る
     '<div class="gpanes" id="gpanes">' +
     tabs.map(t => '<div class="gp" id="gp-' + t[0] + '">' + panes[t[0]] + '</div>').join('') + '</div>' +
@@ -5872,13 +5873,17 @@ function renderGame(name) {
 
 // ---- 試合ページの部品 ----
 const GAME_CSS_ = '<style>' +
-  '.gtabs{display:flex;border-bottom:1px solid #26272e;margin:0 -12px 10px;position:sticky;top:0;background:#0d0d10;z-index:5}' +
+  // 上に残す部分（下の面の中身が透けないよう背景を塗る）
+  '.ghead{position:sticky;top:0;z-index:5;background:#0d0d10;margin:-10px -12px 0;padding:10px 12px 8px;' +
+  'border-bottom:1px solid #26272e}' +
+  '.ghead h1{margin:4px 2px 8px}' +
+  '.gtabs{display:flex;border-bottom:1px solid #26272e;margin:0 -12px 10px}' +
   '.gtabs button{flex:1;background:none;border:none;color:#cfd2da;font-size:.95em;padding:11px 0;cursor:pointer;' +
   'border-bottom:3px solid transparent;font-family:inherit}' +
   '.gtabs button+button{border-left:1px solid #26272e}' +
   '.gtabs button.on{color:#f5a623;border-bottom-color:#f5a623;font-weight:700}' +
   '.board td.ln{cursor:pointer}' +
-  '.ih{background:#1e2026;border-left:4px solid #2f6fdd;padding:9px 10px;margin:14px 0 0;font-size:.92em;font-weight:700;scroll-margin-top:52px}' +
+  '.ih{background:#1e2026;border-left:4px solid #2f6fdd;padding:9px 10px;margin:14px 0 0;font-size:.92em;font-weight:700}' +
   '.ih.s{border-left-color:#f5a623}' +
   '.pa{display:flex;align-items:center;gap:8px;padding:8px 6px;border-top:1px solid #24252b;background:#15161b}' +
   '.pa .po{width:1.4em;text-align:center;color:#9fa3ad}' +
@@ -6026,9 +6031,11 @@ function gameTabs_(KEY, DEF) {
     else box.scrollLeft = x;
     fit();
   }
-  function toTop() {   // 下の方にいたら、面の切り替えの位置まで戻す
-    var y = bar.getBoundingClientRect().top + window.pageYOffset;
-    if (window.pageYOffset > y) window.scrollTo(0, y);
+  // 上に残している部分（見出し〜スコアボード）。その下から面の中身が始まる
+  var head = document.querySelector(".ghead") || bar;
+  function toTop() {   // 下の方にいたら、面の中身の先頭まで戻す
+    var y = box.getBoundingClientRect().top + window.pageYOffset - head.offsetHeight;
+    if (window.pageYOffset > y) window.scrollTo(0, Math.max(0, y));
   }
   var saved = null;
   try { saved = sessionStorage.getItem(KEY); } catch (e) {}
@@ -6054,8 +6061,8 @@ function gameTabs_(KEY, DEF) {
     cells[i].onclick = function () {
       go(order.indexOf("keika"), false);
       var el = document.getElementById(this.getAttribute("data-go"));
-      // 上に貼り付いている面の切り替えに隠れないよう、その高さぶん手前で止める
-      if (el) window.scrollTo(0, el.getBoundingClientRect().top + window.pageYOffset - bar.offsetHeight - 4);
+      // 上に残している部分に隠れないよう、その高さぶん手前で止める
+      if (el) window.scrollTo(0, el.getBoundingClientRect().top + window.pageYOffset - head.offsetHeight - 4);
     };
   }
   // 成績の中の「打者成績／投手成績」
