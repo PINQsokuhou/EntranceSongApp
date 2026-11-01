@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v92";
+const SITE_VER = "site v93";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -3926,6 +3926,7 @@ function sacFlyFix_(apply) {
 // 四球と三振は最後の1球もボタンで押すので正しい。
 // 時期によって数え方が違い、最後の1球を数えていた時期の試合もある。そこで試合ごとに、
 // 「打球などで終わった打席に球数0がある試合」だけを、打球などの打席ぶん +1 する。
+// 結果が空・数字などふつうでない打席は対象にしない。
 // 初球を打つ打席は2〜3割あるので、数えていなかった試合には必ず0が出る。
 // 直した試合は0がなくなるので、もう一度実行しても二重には足さない（途中で止まっても再実行でよい）。
 // 対象: 全シーズンのスプレッドシートの、日付シート・全試合経過・月間の経過シート
@@ -3933,26 +3934,35 @@ function sacFlyFix_(apply) {
 function fixPitchCountsDryRun() { return pitchCountFix_(false); }
 function fixPitchCounts() { return pitchCountFix_(true); }
 
-/** 最後の1球をボタンで押す結果（四球・三振）か。それ以外は最後の1球が数えもれている */
-function isCountedLastPitch_(res) {
-  return res === "四球" || /三振/.test(res);
+/**
+ * 最後の1球を数えもらしていた結果か（打球・死球・エラー・打撃妨害など）。
+ * 四球・三振は最後の1球もボタンで押すので含めない。結果が空や数字など、
+ * ふつうでない書き方の打席も含めない（2025年4〜5月に結果が空・数字の試合がある）
+ */
+function isUncountedLastPitch_(res) {
+  return /^[1-4]塁打$/.test(res) ||
+    /^(ゴロ|フライ|ライナー|併殺|犠飛|犠打|スクイズ|失策|エラー|死球|妨害)$/.test(res);
 }
 
 function pitchCountFix_(apply) {
   const started = Date.now();
-  const logs = [];
-  let total = 0, games = 0, stopped = "";
+  const out = [];
+  let total = 0, stopped = "";
   const seasons = playableSeasons();
   const books = seasons.length ? seasons.map(function (s) { return { label: s.label, book: bookById(s.id) }; })
     : [{ label: "今シーズン", book: ss() }];
   books.some(function (b) {
     const L = layoutOf(b.book);
     const need = Math.max(L.result, L.pitches, L.batter, L.inning) + 1;
-    return b.book.getSheets().some(function (sh) {
+    // シーズンごとにまとめて出す（1行ずつ出すとログが長すぎて切れる）
+    const dateSheets = [], other = [], skipped = [];
+    let dateRows = 0, allRows = -1;
+    const hit = b.book.getSheets().some(function (sh) {
       if (Date.now() - started > 5 * 60 * 1000) { stopped = b.label + " " + sh.getName(); return true; }
       const name = sh.getName();
       // 打席記録のシートだけを見る（日付シート または 「〜経過」シート）
-      if (!/^\d{4}-?\d{2}-?\d{2}/.test(name) && name.indexOf("経過") < 0) return false;
+      const isDate = /^\d{4}-?\d{2}-?\d{2}/.test(name);
+      if (!isDate && name.indexOf("経過") < 0) return false;
       const last = sh.getLastRow();
       if (last < 2 || sh.getMaxColumns() < need) return false;
       const v = sh.getRange(1, 1, last, need).getValues();
@@ -3960,7 +3970,7 @@ function pitchCountFix_(apply) {
       const groups = [];
       let cur = null, prev = null;
       for (let r = 1; r < v.length; r++) {
-        if (String(v[r][L.batter] || "") === "" || String(v[r][L.result] || "").trim() === "") continue;
+        if (String(v[r][L.batter] || "") === "") continue;
         const d = String(v[r][0]), inn = Number(v[r][L.inning]) || 0;
         if (!prev || d !== prev.d || inn < prev.inn) { cur = []; groups.push(cur); }
         cur.push(r);
@@ -3969,34 +3979,45 @@ function pitchCountFix_(apply) {
       const col = v.map(function (row) { return [row[L.pitches]]; });
       let changed = 0, gamesHere = 0;
       groups.forEach(function (g) {
-        const inPlay = g.filter(function (r) { return !isCountedLastPitch_(String(v[r][L.result]).trim()); });
-        const hasZero = inPlay.some(function (r) { return (Number(v[r][L.pitches]) || 0) === 0; });
+        const target = g.filter(function (r) { return isUncountedLastPitch_(String(v[r][L.result] || "").trim()); });
+        const hasZero = target.some(function (r) { return (Number(v[r][L.pitches]) || 0) === 0; });
         if (!hasZero) return;
-        inPlay.forEach(function (r) { col[r][0] = (Number(v[r][L.pitches]) || 0) + 1; });
-        changed += inPlay.length;
+        target.forEach(function (r) { col[r][0] = (Number(v[r][L.pitches]) || 0) + 1; });
+        changed += target.length;
         gamesHere++;
-        logs.push("  " + b.label + " / " + name + "  " + ymd(v[g[0]][0]) + "  " + inPlay.length + " 打席");
       });
-      if (!changed) return false;
+      if (!changed) { if (name === ALL_GAMES) allRows = 0; return false; }
       const rng = sh.getRange(2, L.pitches + 1, last - 1, 1);
       // 数式の入った列は書き換えない（値だけの列のはず。念のため）
-      if (rng.getFormulas().some(function (f) { return f[0]; })) {
-        logs.push("    ※ " + name + " は球数の列に数式があるので、書き換えません");
-        return false;
-      }
+      if (rng.getFormulas().some(function (f) { return f[0]; })) { skipped.push(name); return false; }
       total += changed;
-      games += gamesHere;
+      if (isDate) { dateSheets.push(name); dateRows += changed; }
+      else {
+        other.push(name + " " + gamesHere + "試合 " + changed + "打席");
+        if (name === ALL_GAMES) allRows = changed;
+      }
       if (apply) rng.setValues(col.slice(1));
       return false;
     });
+    if (dateSheets.length || other.length || skipped.length) {
+      out.push("■ " + b.label + ": " + dateSheets.length + " 試合 " + dateRows + " 打席");
+      if (dateSheets.length) out.push("  試合: " + dateSheets.sort().join(", "));
+      if (other.length) out.push("  経過シート: " + other.join(" / "));
+      // 全試合経過と日付シートは同じ打席の写しなので、数が合うはず
+      if (allRows >= 0 && allRows !== dateRows) {
+        out.push("  ※ 全試合経過（" + allRows + "打席）と日付シート（" + dateRows + "打席）の数が違います");
+      }
+      if (skipped.length) out.push("  ※ 球数の列に数式があるので書き換えないシート: " + skipped.join(", "));
+    }
+    return hit;
   });
   if (apply && total) {
     SpreadsheetApp.flush();
     invalidatePageCaches();
     publishAllSoon();   // 試合ページ・成績（投球数）を作り直す
   }
-  const msg = (apply ? "球数を +1 しました: " : "直す対象（まだ変更していません）: ") +
-    total + " 打席（" + games + " 試合ぶん。日付シートと経過シートの両方を数えています）\n" + logs.join("\n") +
+  const msg = (apply ? "球数を +1 しました" : "直す対象（まだ変更していません）") +
+    "（日付シート・全試合経過・月間の経過シートの合計 " + total + " か所）\n" + out.join("\n") +
     (stopped ? "\n\n※ 時間切れで「" + stopped + "」の手前で止めました。" +
       (apply ? "もう一度実行すると続きから進みます（直した試合は飛ばします）" : "一覧はここまでです") : "") +
     (apply ? "" : "\n\n問題なければ fixPitchCounts() を実行してください。");
