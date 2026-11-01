@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v97";
+const SITE_VER = "site v98";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -4052,8 +4052,11 @@ function pitchCountFix_(apply) {
 //  - その登板でアウトを1つ以上取り、投げている間リードを守った（同点・逆転されていない）
 //  - 負けたチーム・引き分けの試合の投手にも付く。再登板は登板ごとに見て、どれか1回で満たせばよい
 // 勝ち・負け・セーブは記録されているものをそのまま使い、ホールドの列だけを書き換える。
-// 対象: 全シーズンの日付シート・全試合経過・月間の経過シート（右側の投手成績の欄）
+// 対象: HOLD_FIX_FROM 以降の試合の、日付シート・全試合経過・月間の経過シート（右側の投手成績の欄）
 // 使い方: まず fixHoldsDryRun() で変わる試合を確認 → 問題なければ fixHolds() を実行。
+// 直すのはアプリ期（今の記録アプリで記録した 2026年7月以降）の試合だけ。
+// それより前は記録した人の判断でホールドを付けていたので、そのまま残す。
+const HOLD_FIX_FROM = "2026-07-01";
 function fixHoldsDryRun() { return holdFix_(false); }
 function fixHolds() { return holdFix_(true); }
 
@@ -4130,6 +4133,7 @@ function holdFix_(apply) {
       let touched = false;
       groups.forEach(function (g, gi) {
         const end = gi + 1 < groups.length ? groups[gi + 1].start : v.length;   // この試合の行の範囲 [start, end)
+        if (ymd(v[g.start][0]) < HOLD_FIX_FROM) return;   // アプリ期より前の試合は変えない
         const old = [], saves = [];
         for (let r = g.start; r < end; r++) {
           const h = normName(v[r][PB + 6]); if (h) old.push(h);
@@ -4169,7 +4173,7 @@ function holdFix_(apply) {
     publishAllSoon();   // 試合ページ・成績（ホールド数）を作り直す
   }
   const msg = (apply ? "ホールドを付け直しました" : "ホールドが変わる試合（まだ変更していません）") +
-    ": " + changedGames + " 試合（日付シートで数えています。全試合経過・月間の経過シートも同じように直します）\n" +
+    ": " + changedGames + " 試合（" + HOLD_FIX_FROM + " 以降の試合だけ。日付シートで数えています。全試合経過・月間の経過シートも同じように直します）\n" +
     out.join("\n") +
     (stopped ? "\n\n※ 時間切れで「" + stopped + "」の手前で止めました。" +
       (apply ? "もう一度実行すると続きから進みます（直した試合は変わらないので飛ばします）" : "一覧はここまでです") : "") +
