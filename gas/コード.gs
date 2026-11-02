@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v116";
+const SITE_VER = "site v117";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -4295,7 +4295,7 @@ function addPlayerRows_(apply) {
  * を出す。成績シートと試合ページの打席数が合わない原因を探すために使う。
  */
 // 調べるシーズン（シーズン一覧の名前。いくつでも並べられる）
-const AUDIT_SEASONS = ["2024秋冬"];
+const AUDIT_SEASONS = ["2026春夏"];
 function seasonAuditReport() {
   const msg = AUDIT_SEASONS.map(seasonAudit_).join("\n\n");
   Logger.log(msg);
