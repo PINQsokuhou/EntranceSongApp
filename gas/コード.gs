@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v102";
+const SITE_VER = "site v103";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -4182,6 +4182,102 @@ function holdFix_(apply) {
     (stopped ? "\n\n※ 時間切れで「" + stopped + "」の手前で止めました。" +
       (apply ? "もう一度実行すると続きから進みます（直した試合は変わらないので飛ばします）" : "一覧はここまでです") : "") +
     (apply ? "" : "\n\n問題なければ fixHolds() を実行してください。");
+  Logger.log(msg);
+  return msg;
+}
+
+// ---- シーズン通算の成績シートに選手の行を足す（一度きりの修復用）----
+// 成績シートは選手ごとに1行で、行の数式がA列（打者）・投手名の列の名前で全試合経過を数えている。
+// 名簿に後から加わった選手は行が無く、サイトの個人成績にも出なかった（2026春夏の藤田拓）。
+// 一番下の選手の行の上に1行入れ、その行の数式を写して名前だけ入れ替える
+// （一番下の選手の行より上に入れるので、合計・平均の行の範囲にも自動で入る）。
+// 使い方: まず addPlayerRowsDryRun() で入れる場所を確認 → 問題なければ addPlayerRows() を実行。
+const ADD_PLAYER_NAME = "藤田拓";                       // 入れる選手（名簿の正式名）
+const ADD_PLAYER_SEASONS = ["2026春夏", "2026秋冬"];    // 入れるシーズン（シーズン一覧の名前）
+function addPlayerRowsDryRun() { return addPlayerRows_(false); }
+function addPlayerRows() { return addPlayerRows_(true); }
+
+function addPlayerRows_(apply) {
+  const want = normName(ADD_PLAYER_NAME);
+  const out = [];
+  let added = 0;
+  ADD_PLAYER_SEASONS.forEach(function (label) {
+    const s = seasonList().filter(function (x) { return x.label === label && !x.statsSheet; })[0];
+    if (!s) {
+      out.push("■ " + label + ": シーズン一覧に見つかりません（" +
+        playableSeasons().map(function (x) { return x.label; }).join("・") + "）");
+      return;
+    }
+    withSeason_(s.id, function () {
+      const book = ss();
+      const sh = seisekiSheetFor(ALL_GAMES);
+      if (!sh) { out.push("■ " + label + ": シーズン通算の成績シートが見つかりません"); return; }
+      const v = sh.getDataRange().getValues();
+      const split = seisekiSplitCol(v);   // 投手名の列（無ければ -1）
+      const isSum = function (x) { return /^(平均|合計|計|total)$/i.test(String(x || "").trim()); };
+      // すでに行があれば何もしない
+      for (let r = 1; r < v.length; r++) {
+        if (normName(v[r][0]) === want || (split >= 0 && normName(v[r][split]) === want)) {
+          out.push("■ " + label + ": " + sh.getName() + " の " + (r + 1) + " 行目にもうあります（" + v[r][0] + "）");
+          return;
+        }
+      }
+      // 全試合経過で使われている書き方（数式は名前の文字で数えるので、それに合わせる）
+      const L = layoutOf(book);
+      const games = book.getSheetByName(ALL_GAMES);
+      const spell = {}, asPitcher = {};
+      if (games && games.getLastRow() >= 2) {
+        games.getRange(2, 1, games.getLastRow() - 1, Math.max(L.batter, L.pitcher) + 1).getValues().forEach(function (row) {
+          [L.batter, L.pitcher].forEach(function (c) {
+            const raw = String(row[c] || "").trim();
+            if (raw && normName(raw) === want) {
+              spell[raw] = (spell[raw] || 0) + 1;
+              if (c === L.pitcher) asPitcher[raw] = 1;
+            }
+          });
+        });
+      }
+      const spells = Object.keys(spell).sort(function (a, b) { return spell[b] - spell[a]; });
+      const name = spells[0] || ADD_PLAYER_NAME;
+      // 一番下の選手の行（打者のA列）と、投手の列の一番下
+      let last = -1, lastP = -1;
+      for (let r = 1; r < v.length; r++) {
+        if (String(v[r][0] || "").trim() && !isSum(v[r][0])) last = r;
+        if (split >= 0 && String(v[r][split] || "").trim() && !isSum(v[r][split])) lastP = r;
+      }
+      if (last < 1) { out.push("■ " + label + ": 選手の行が見つかりません"); return; }
+      const row1 = last + 1;   // シート上の行番号（1始まり）。ここに入れ、元の行は1つ下へ
+      const pitched = !!asPitcher[name];
+      out.push("■ " + label + "（" + sh.getName() + "）: " + row1 + " 行目に「" + name + "」の行を入れ、" +
+        "今その行にいる「" + v[last][0] + "」の行の数式を写します" +
+        "（全試合経過での書き方: " + (spells.length ? spells.map(function (x) { return x + " " + spell[x] + "打席・登板"; }).join(" / ") : "まだ出場なし") +
+        (pitched ? "" : "。投手としてはまだ出ていないが、ほかの選手と同じく投手の欄にも名前を入れます") + "）");
+      if (spells.length > 1) out.push("  ※ 書き方が複数あります。数式が数えるのは「" + name + "」だけです");
+      if (split >= 0 && lastP !== last) {
+        out.push("  ※ 打者と投手で一番下の選手の行が違います（打者 " + (last + 1) + " 行目 / 投手 " + (lastP + 1) + " 行目）。" +
+          "合計・平均の範囲がずれるおそれがあるので、このシーズンは入れません");
+        return;
+      }
+      if (!apply) return;
+      sh.insertRowBefore(row1);
+      const width = sh.getLastColumn();
+      sh.getRange(row1 + 1, 1, 1, width).copyTo(sh.getRange(row1, 1, 1, width));   // 数式ごと写す（行番号はずれて合う）
+      sh.getRange(row1, 1).setValue(name);
+      if (split >= 0) {
+        const pc = sh.getRange(row1, split + 1);
+        // 投手の欄にも名前を入れる（空けると数式が空欄を数えて合計がずれる）。名前が数式（=A5 など）なら触らない
+        if (!pc.getFormula()) pc.setValue(name);
+      }
+      added++;
+    });
+  });
+  if (apply && added) {
+    SpreadsheetApp.flush();
+    invalidatePageCaches();
+    publishAllSoon();   // 成績ページ・選手ページを作り直す
+  }
+  const msg = (apply ? "行を足しました: " + added + " シーズン\n" : "行を足す場所（まだ変更していません）\n") +
+    out.join("\n") + (apply ? "" : "\n\n問題なければ addPlayerRows() を実行してください。");
   Logger.log(msg);
   return msg;
 }
