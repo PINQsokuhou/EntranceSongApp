@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v108";
+const SITE_VER = "site v109";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -4192,9 +4192,9 @@ function holdFix_(apply) {
 // 一番下の選手の行の上に1行入れ、その行の数式を写して名前だけ入れ替える
 // （一番下の選手の行より上に入れるので、合計・平均の行の範囲にも自動で入る）。
 // 使い方: まず addPlayerRowsDryRun() で入れる場所を確認 → 問題なければ addPlayerRows() を実行。
-const ADD_PLAYER_NAME = "藤田拓";                       // 入れる選手（名簿の正式名）
+const ADD_PLAYER_NAME = "中澤";                         // 入れる選手（名簿の正式名）。藤田拓は 2026春夏・今シーズンに追加済み
 // 入れるシーズン（シーズン一覧の名前。今のシーズン＝2026秋冬は一覧では「今シーズン」）
-const ADD_PLAYER_SEASONS = ["2026春夏", "今シーズン"];
+const ADD_PLAYER_SEASONS = ["2025秋冬"];
 function addPlayerRowsDryRun() { return addPlayerRows_(false); }
 function addPlayerRows() { return addPlayerRows_(true); }
 
