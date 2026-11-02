@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v109";
+const SITE_VER = "site v110";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -4291,7 +4291,7 @@ function addPlayerRows_(apply) {
  *  3. 全試合経過に出てくるのに成績シートに行が無い選手
  * を出す。成績シートと試合ページの打席数が合わない原因を探すために使う。
  */
-const AUDIT_SEASON = "2025秋冬";
+const AUDIT_SEASON = "2025春夏";
 function seasonAuditReport() {
   const s = seasonList().filter(function (x) { return x.label === AUDIT_SEASON && !x.statsSheet; })[0];
   if (!s) return "シーズン一覧に「" + AUDIT_SEASON + "」がありません（" + playableSeasons().map(function (x) { return x.label; }).join("・") + "）";
@@ -4343,6 +4343,21 @@ function seasonAuditReport() {
     sheets.forEach(function (x) { if (!x.used) issues.push("  全試合経過に無い: " + x.name + "（" + x.n + "打席）"); });
     out.push("1. 試合の突き合わせ: " + (issues.length ? issues.length + " 件" : "ずれなし"));
     out.push.apply(out, issues);
+
+    // 列の並びが違う試合（球場・打左右・投左右・バットの列が無い古い形で書かれた行）。
+    // そのまま読むと投手の欄にカウント（1-0 など）が入り、結果が空に見える
+    const oddRow = function (r) { return /^\d-\d$/.test(String(r.pitcher)) || /^\d-\d$/.test(String(r.batter)); };
+    const odd = [];
+    games.forEach(function (g) {
+      const k = g.rows.filter(oddRow).length;
+      if (k) odd.push("  全試合経過 " + g.date + "（" + g.rows.length + "打席中 " + k + "）");
+    });
+    gameSheetNames().forEach(function (n) {
+      const rows = rowsOf(n), k = rows.filter(oddRow).length;
+      if (k) odd.push("  日付シート " + n + "（" + rows.length + "打席中 " + k + "）");
+    });
+    out.push("1b. 列の並びが違う（古い形の）試合: " + (odd.length ? odd.length + " 件（このシーズンの列の形は" + (layoutOf(ss()) === LAYOUT_OLD ? "旧" : "新") + "）" : "なし"));
+    out.push.apply(out, odd);
 
     // 2. 成績シートの打席と、全試合経過から数えた打席
     const pa = {};
