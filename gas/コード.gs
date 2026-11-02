@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v110";
+const SITE_VER = "site v111";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -4192,34 +4192,35 @@ function holdFix_(apply) {
 // 一番下の選手の行の上に1行入れ、その行の数式を写して名前だけ入れ替える
 // （一番下の選手の行より上に入れるので、合計・平均の行の範囲にも自動で入る）。
 // 使い方: まず addPlayerRowsDryRun() で入れる場所を確認 → 問題なければ addPlayerRows() を実行。
-const ADD_PLAYER_NAME = "中澤";                         // 入れる選手（名簿の正式名）。藤田拓は 2026春夏・今シーズンに追加済み
-// 入れるシーズン（シーズン一覧の名前。今のシーズン＝2026秋冬は一覧では「今シーズン」）
-const ADD_PLAYER_SEASONS = ["2025秋冬"];
+// 入れる選手とシーズン（[名簿の正式名, シーズン一覧の名前]。今のシーズンは「今シーズン」）。
+// 追加済み: 藤田拓（2026春夏・今シーズン）、中澤（2025秋冬）
+const ADD_PLAYERS = [["鈴木", "2025春夏"], ["小林", "2025春夏"]];
 function addPlayerRowsDryRun() { return addPlayerRows_(false); }
 function addPlayerRows() { return addPlayerRows_(true); }
 
 function addPlayerRows_(apply) {
-  const want = normName(ADD_PLAYER_NAME);
   const out = [];
   let added = 0;
-  ADD_PLAYER_SEASONS.forEach(function (label) {
+  ADD_PLAYERS.forEach(function (pair) {
+    const ADD_PLAYER_NAME = pair[0], label = pair[1];
+    const want = normName(ADD_PLAYER_NAME);
     const s = seasonList().filter(function (x) { return x.label === label && !x.statsSheet; })[0];
     if (!s) {
-      out.push("■ " + label + ": シーズン一覧に見つかりません（" +
+      out.push("■ " + ADD_PLAYER_NAME + "・" + label + ": シーズン一覧に見つかりません（" +
         playableSeasons().map(function (x) { return x.label; }).join("・") + "）");
       return;
     }
     withSeason_(s.id, function () {
       const book = ss();
       const sh = seisekiSheetFor(ALL_GAMES);
-      if (!sh) { out.push("■ " + label + ": シーズン通算の成績シートが見つかりません"); return; }
+      if (!sh) { out.push("■ " + ADD_PLAYER_NAME + "・" + label + ": シーズン通算の成績シートが見つかりません"); return; }
       const v = sh.getDataRange().getValues();
       const split = seisekiSplitCol(v);   // 投手名の列（無ければ -1）
       const isSum = function (x) { return /^(平均|合計|計|total)$/i.test(String(x || "").trim()); };
       // すでに行があれば何もしない
       for (let r = 1; r < v.length; r++) {
         if (normName(v[r][0]) === want || (split >= 0 && normName(v[r][split]) === want)) {
-          out.push("■ " + label + ": " + sh.getName() + " の " + (r + 1) + " 行目にもうあります（" + v[r][0] + "）");
+          out.push("■ " + ADD_PLAYER_NAME + "・" + label + ": " + sh.getName() + " の " + (r + 1) + " 行目にもうあります（" + v[r][0] + "）");
           return;
         }
       }
@@ -4246,10 +4247,10 @@ function addPlayerRows_(apply) {
         if (String(v[r][0] || "").trim() && !isSum(v[r][0])) last = r;
         if (split >= 0 && String(v[r][split] || "").trim() && !isSum(v[r][split])) lastP = r;
       }
-      if (last < 1) { out.push("■ " + label + ": 選手の行が見つかりません"); return; }
+      if (last < 1) { out.push("■ " + ADD_PLAYER_NAME + "・" + label + ": 選手の行が見つかりません"); return; }
       const row1 = last + 1;   // シート上の行番号（1始まり）。ここに入れ、元の行は1つ下へ
       const pitched = !!asPitcher[name];
-      out.push("■ " + label + "（" + sh.getName() + "）: " + row1 + " 行目に「" + name + "」の行を入れ、" +
+      out.push("■ " + ADD_PLAYER_NAME + "・" + label + "（" + sh.getName() + "）: " + row1 + " 行目に「" + name + "」の行を入れ、" +
         "今その行にいる「" + v[last][0] + "」の行の数式を写します" +
         "（全試合経過での書き方: " + (spells.length ? spells.map(function (x) { return x + " " + spell[x] + "打席・登板"; }).join(" / ") : "まだ出場なし") +
         (pitched ? "" : "。投手としてはまだ出ていないが、ほかの選手と同じく投手の欄にも名前を入れます") + "）");
@@ -4382,6 +4383,84 @@ function seasonAuditReport() {
     Logger.log(msg);
     return msg;
   });
+}
+
+// ---- 古い列の並びで書かれた日付シートを、今の並びにそろえる（一度きりの修復用）----
+// 2025年4〜5月の日付シートは、球場・打左右・投左右・バットの4列が無い古い並びで書かれていて、
+// 試合ページで投手の欄にカウントが出たり、結果が「-」になったりしていた（全試合経過は正しい）。
+// 足りない4列を正しい位置に入れ（右側の投手成績の欄も4列ずれて正しい位置に来る）、
+// 入れた4列には全試合経過の同じ試合から値を写す。対象は今の並び（新）のシーズンの日付シートで、
+// ほとんどの行の投手の欄にカウント（1-0 など）が入っているもの。
+// 使い方: まず fixOldLayoutSheetsDryRun() で対象を確認 → 問題なければ fixOldLayoutSheets() を実行。
+function fixOldLayoutSheetsDryRun() { return oldLayoutFix_(false); }
+function fixOldLayoutSheets() { return oldLayoutFix_(true); }
+
+function oldLayoutFix_(apply) {
+  const out = [];
+  let fixed = 0;
+  const isCount = function (x) { return /^\d-\d$/.test(String(x == null ? "" : x).trim()); };
+  playableSeasons().forEach(function (s) {
+    withSeason_(s.id, function () {
+      const book = ss();
+      if (layoutOf(book) !== LAYOUT_NEW) return;   // シーズン全体が古い並びなら、そのままで正しく読める
+      const N = LAYOUT_NEW, O = LAYOUT_OLD;
+      // 全試合経過を試合ごとに分けておく（入れた4列の値を写すため）
+      const all = book.getSheetByName(ALL_GAMES);
+      const av = all && all.getLastRow() >= 2 ? all.getRange(2, 1, all.getLastRow() - 1, 28).getValues() : [];
+      const games = [];
+      let cur = null, prev = null;
+      av.forEach(function (r) {
+        if (String(r[N.batter] || "") === "") return;
+        const d = String(r[0]), inn = Number(r[N.inning]) || 0;
+        if (!prev || d !== prev.d || inn < prev.inn) { cur = []; games.push(cur); }
+        cur.push(r);
+        prev = { d: d, inn: inn };
+      });
+      const sigN = function (rows) { return rows.slice(0, 3).map(function (r) { return [r[N.inning], r[N.tb], normName(r[N.batter]), normName(r[N.pitcher])].join("/"); }).join(" "); };
+      const sigO = function (rows) { return rows.slice(0, 3).map(function (r) { return [r[O.inning], r[O.tb], normName(r[O.batter]), normName(r[O.pitcher])].join("/"); }).join(" "); };
+      gameSheetNames().forEach(function (name) {
+        const sh = book.getSheetByName(name);
+        if (!sh || sh.getLastRow() < 2) return;
+        const v = sh.getRange(2, 1, sh.getLastRow() - 1, Math.min(28, sh.getMaxColumns())).getValues()
+          .filter(function (r) { return String(r[O.batter] || "") !== ""; });
+        if (!v.length) return;
+        const odd = v.filter(function (r) { return isCount(r[N.pitcher]); }).length;
+        if (odd < v.length * 0.8) return;   // ほとんどの行がずれているシートだけ
+        // 全試合経過の同じ試合（古い並びで読んだ最初の3打席と打席数が一致するもの）
+        const g = games.filter(function (x) { return x.length === v.length && sigN(x) === sigO(v); })[0];
+        out.push("  " + s.label + " / " + name + "（" + v.length + "打席）" +
+          (g ? " … 全試合経過の同じ試合から 球場・打左右・投左右・バット を写します" : " … ※ 全試合経過に同じ試合が見つからないので、4列は空けたままにします"));
+        if (!apply) return;
+        // 古い並びの列: 打者=H(8) 投手=I(9) 性質=N(14)。左から入れると右がずれるので、その都度位置を計算する
+        sh.insertColumnAfter(1);    // B: 球場
+        sh.insertColumnAfter(9);    // J: 打左右（打者は I に移っている）
+        sh.insertColumnAfter(11);   // L: 投左右（投手は K に移っている）
+        sh.insertColumnAfter(17);   // R: バット種類（性質は Q に移っている）
+        sh.getRange(1, 1, 1, HEADER.length).setValues([HEADER]);
+        if (g) {
+          const n = sh.getLastRow() - 1;
+          const cur2 = sh.getRange(2, 1, n, 28).getValues();
+          let k = 0;
+          for (let i = 0; i < cur2.length && k < g.length; i++) {
+            if (String(cur2[i][N.batter] || "") === "") continue;
+            [N.stadium, 9, 11, 17].forEach(function (c) { cur2[i][c] = g[k][c]; });   // 球場・打左右・投左右・バット
+            k++;
+          }
+          sh.getRange(2, 1, n, 28).setValues(cur2);
+        }
+        fixed++;
+      });
+    });
+  });
+  if (apply && fixed) {
+    SpreadsheetApp.flush();
+    invalidatePageCaches();
+    publishAllSoon();   // 試合ページを作り直す
+  }
+  const msg = (apply ? "並びをそろえました: " + fixed + " 枚\n" : "古い並びの日付シート（まだ変更していません）: " + out.length + " 枚\n") +
+    out.join("\n") + (apply ? "" : "\n\n問題なければ fixOldLayoutSheets() を実行してください。");
+  Logger.log(msg);
+  return msg;
 }
 
 /**
