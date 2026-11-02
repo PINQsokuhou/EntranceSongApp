@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v114";
+const SITE_VER = "site v115";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -4530,6 +4530,51 @@ function oldLayoutFix_(apply) {
   }
   const msg = (apply ? "並びをそろえました: " + fixed + " 枚\n" : "古い並びの日付シート（まだ変更していません）: " + out.length + " 枚\n") +
     out.join("\n") + (apply ? "" : "\n\n問題なければ fixOldLayoutSheets() を実行してください。");
+  Logger.log(msg);
+  return msg;
+}
+
+// ---- 試合の途中に1行だけ紛れた別の日付を直す（一度きりの修復用）----
+// 2024秋冬の全試合経過 1130行目は、前後が 2025-02-15 なのに 1行だけ 2025-02-16 になっていて、
+// 試合が途中で分かれて数えられていた。前後の行が同じ日付で、その行だけ違うものを前後の日付に直す。
+// 対象は AUDIT_SEASONS のシーズンの、全試合経過・月間の経過シート・日付シート。フィルタで隠れた行も直す。
+// 使い方: まず fixStrayDatesDryRun() で直す行を確認 → 問題なければ fixStrayDates() を実行。
+function fixStrayDatesDryRun() { return strayDateFix_(false); }
+function fixStrayDates() { return strayDateFix_(true); }
+
+function strayDateFix_(apply) {
+  const out = [];
+  let total = 0;
+  AUDIT_SEASONS.forEach(function (label) {
+    const s = seasonList().filter(function (x) { return x.label === label && !x.statsSheet; })[0];
+    if (!s) { out.push("■ " + label + ": シーズン一覧に見つかりません"); return; }
+    withSeason_(s.id, function () {
+      const book = ss(), L = layoutOf(book);
+      book.getSheets().forEach(function (sh) {
+        const name = sh.getName();
+        if (!/^\d{4}-?\d{2}-?\d{2}/.test(name) && name.indexOf("経過") < 0) return;
+        const last = sh.getLastRow();
+        if (last < 4) return;
+        const v = sh.getRange(2, 1, last - 1, L.batter + 1).getValues();
+        const day = function (x) { return ymd(x); };
+        for (let i = 1; i + 1 < v.length; i++) {
+          if (String(v[i][L.batter] || "") === "") continue;
+          const d = day(v[i][0]), dp = day(v[i - 1][0]), dn = day(v[i + 1][0]);
+          if (!d || !dp || d === dp || dp !== dn) continue;
+          out.push("  " + label + " / " + name + " " + (i + 2) + "行目: " + d + " → " + dp + "（" + v[i][L.inning] + "回 打者 " + v[i][L.batter] + "）");
+          total++;
+          if (apply) sh.getRange(i + 2, 1).setValue(v[i - 1][0]);   // 前の行と同じ値（日付の型もそろう）
+        }
+      });
+    });
+  });
+  if (apply && total) {
+    SpreadsheetApp.flush();
+    invalidatePageCaches();
+    publishAllSoon();
+  }
+  const msg = (apply ? "日付を直しました: " : "直す行（まだ変更していません）: ") + total + " 行\n" + out.join("\n") +
+    (apply ? "" : "\n\n問題なければ fixStrayDates() を実行してください。");
   Logger.log(msg);
   return msg;
 }
