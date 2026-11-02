@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v107";
+const SITE_VER = "site v108";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -4308,8 +4308,17 @@ function seasonAuditReport() {
     // 全試合経過を試合ごとに分ける（日付が変わる・回が戻る＝次の試合）
     const all = rowsOf(ALL_GAMES), games = [];
     let cur = null, prev = null;
+    // 日付の欄は「2025-10-13-1」（試合番号つき）や「20251104」（ハイフンなし）のこともあるので YYYY-MM-DD にそろえる
+    const dayOf = function (v) {
+      const t = String(v || "").trim();
+      let m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (m) return m[1] + "-" + m[2] + "-" + m[3];
+      m = t.match(/^(\d{4})(\d{2})(\d{2})$/);
+      if (m) return m[1] + "-" + m[2] + "-" + m[3];
+      return ymd(v);
+    };
     all.forEach(function (r) {
-      const d = ymd(r.date);
+      const d = dayOf(r.date);
       if (!prev || d !== prev.d || r.inning < prev.inn) { cur = { date: d, rows: [] }; games.push(cur); }
       cur.rows.push(r);
       prev = { d: d, inn: r.inning };
