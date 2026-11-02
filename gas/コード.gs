@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v106";
+const SITE_VER = "site v107";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -4281,6 +4281,83 @@ function addPlayerRows_(apply) {
     out.join("\n") + (apply ? "" : "\n\n問題なければ addPlayerRows() を実行してください。");
   Logger.log(msg);
   return msg;
+}
+
+/**
+ * シーズンの記録の突き合わせ（書き換えはしない）。AUDIT_SEASON のシーズンについて
+ *  1. 全試合経過を試合ごとに分け、日付シート（試合ページの元）と1試合ずつ照らし合わせる
+ *     （日付シートが無い試合・二重に入っている試合・打席数が違う試合・全試合経過に無い日付シート）
+ *  2. 成績シートの打席と、全試合経過から数えた打席を選手ごとに比べる
+ *  3. 全試合経過に出てくるのに成績シートに行が無い選手
+ * を出す。成績シートと試合ページの打席数が合わない原因を探すために使う。
+ */
+const AUDIT_SEASON = "2025秋冬";
+function seasonAuditReport() {
+  const s = seasonList().filter(function (x) { return x.label === AUDIT_SEASON && !x.statsSheet; })[0];
+  if (!s) return "シーズン一覧に「" + AUDIT_SEASON + "」がありません（" + playableSeasons().map(function (x) { return x.label; }).join("・") + "）";
+  return withSeason_(s.id, function () {
+    const out = ["■ " + AUDIT_SEASON + " の突き合わせ"];
+    const sig = function (rows) {   // 試合の見分け: 最初の3打席の 回・表裏・打者・投手
+      return rows.slice(0, 3).map(function (r) { return r.inning + r.tb + r.batter + "/" + r.pitcher; }).join(" ");
+    };
+    // 日付シート
+    const sheets = gameSheetNames().map(function (n) {
+      const rows = rowsOf(n);
+      return { name: n, date: n.slice(0, 10), n: rows.length, sig: sig(rows), used: 0 };
+    });
+    // 全試合経過を試合ごとに分ける（日付が変わる・回が戻る＝次の試合）
+    const all = rowsOf(ALL_GAMES), games = [];
+    let cur = null, prev = null;
+    all.forEach(function (r) {
+      const d = ymd(r.date);
+      if (!prev || d !== prev.d || r.inning < prev.inn) { cur = { date: d, rows: [] }; games.push(cur); }
+      cur.rows.push(r);
+      prev = { d: d, inn: r.inning };
+    });
+    out.push("全試合経過: " + games.length + " 試合・" + all.length + " 打席 ／ 日付シート: " + sheets.length + " 枚・" +
+      sheets.reduce(function (a, x) { return a + x.n; }, 0) + " 打席");
+    const issues = [];
+    games.forEach(function (g) {
+      const gs = sig(g.rows);
+      const same = sheets.filter(function (x) { return x.date === g.date && x.sig === gs; });
+      const hit = same.filter(function (x) { return x.n === g.rows.length; })[0];
+      if (hit) {
+        hit.used++;
+        if (hit.used > 1) issues.push("  二重: " + g.date + "（" + g.rows.length + "打席）が全試合経過に" + hit.used + "回目 → " + hit.name);
+      } else if (same.length) {
+        issues.push("  打席数が違う: " + g.date + " 全試合経過 " + g.rows.length + "打席 / " + same[0].name + " " + same[0].n + "打席");
+        same[0].used++;
+      } else {
+        issues.push("  日付シートが無い: " + g.date + "（" + g.rows.length + "打席・先頭 " + (g.rows[0] ? g.rows[0].batter : "") + "）");
+      }
+    });
+    sheets.forEach(function (x) { if (!x.used) issues.push("  全試合経過に無い: " + x.name + "（" + x.n + "打席）"); });
+    out.push("1. 試合の突き合わせ: " + (issues.length ? issues.length + " 件" : "ずれなし"));
+    out.push.apply(out, issues);
+
+    // 2. 成績シートの打席と、全試合経過から数えた打席
+    const pa = {};
+    all.forEach(function (r) { if (r.batter) pa[r.batter] = (pa[r.batter] || 0) + 1; });
+    const src = seisekiRankSource(seisekiSheetFor(ALL_GAMES));
+    const diffs = [], inSheet = {};
+    if (src) {
+      const qc = qualColOf(src, true);
+      for (let r = 1; r < src.values.length; r++) {
+        const nm = normName(src.values[r][0]);
+        if (!nm || /^(平均|合計|計|total)$/i.test(nm)) continue;
+        inSheet[nm] = 1;
+        const sv = qc >= 0 ? (statNum(src.values[r][qc]) || 0) : null;
+        if (sv !== null && sv !== (pa[nm] || 0)) diffs.push(nm + " シート" + sv + "/経過" + (pa[nm] || 0));
+      }
+    }
+    out.push("2. 成績シートの打席と全試合経過の打席: " + (src ? (diffs.length ? diffs.length + " 人違う → " + diffs.join(", ") : "全員一致") : "成績シートが見つかりません"));
+    // 3. 成績シートに行が無い選手
+    const missing = Object.keys(pa).filter(function (n) { return !inSheet[n]; });
+    out.push("3. 成績シートに行が無い選手: " + (missing.length ? missing.map(function (n) { return n + "（" + pa[n] + "打席）"; }).join(", ") : "なし"));
+    const msg = out.join("\n");
+    Logger.log(msg);
+    return msg;
+  });
 }
 
 /**
