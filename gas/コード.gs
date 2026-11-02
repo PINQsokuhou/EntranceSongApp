@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v119";
+const SITE_VER = "site v120";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -4669,6 +4669,60 @@ function nameSpaceFix_(apply) {
   }
   const msg = (apply ? "空白を取りました: " : "直す所（まだ変更していません）: ") + total + " か所（␣=半角空白 □=全角空白など）\n" +
     out.join("\n") + (apply ? "" : "\n\n問題なければ fixNameSpaces() を実行してください。");
+  Logger.log(msg);
+  return msg;
+}
+
+// ---- 名前の書き方の違いをそろえる（一度きりの修復用）----
+// 2026春夏の 2026-07-06 の試合は、投手成績の欄で冨髙が「冨高」になっていて、
+// 成績シートの数式が冨髙として数えず、登坂が1つ少なかった。
+// NAME_VARIANT_FIXES の [直す前, 直した後] で、名前の欄の値がちょうど「直す前」のものを「直した後」に変える。
+// 対象の列・シートは fixNameSpaces と同じ。
+// 使い方: まず fixNameVariantsDryRun() で直す所を確認 → 問題なければ fixNameVariants() を実行。
+const NAME_VARIANT_FIXES = [["冨高", "冨髙"]];
+function fixNameVariantsDryRun() { return nameVariantFix_(false); }
+function fixNameVariants() { return nameVariantFix_(true); }
+
+function nameVariantFix_(apply) {
+  const out = [];
+  let total = 0;
+  const to = {};
+  NAME_VARIANT_FIXES.forEach(function (p) { to[p[0]] = p[1]; });
+  AUDIT_SEASONS.forEach(function (label) {
+    const s = seasonList().filter(function (x) { return x.label === label && !x.statsSheet; })[0];
+    if (!s) { out.push("■ " + label + ": シーズン一覧に見つかりません"); return; }
+    withSeason_(s.id, function () {
+      const book = ss(), L = layoutOf(book), PB = L.pblockName;
+      const cols = [L.batter, L.pitcher, PB - 1, PB, PB + 3, PB + 4, PB + 5, PB + 6, PB + 7];
+      book.getSheets().forEach(function (sh) {
+        const name = sh.getName();
+        if (!/^\d{4}-?\d{2}-?\d{2}/.test(name) && name.indexOf("経過") < 0) return;
+        const last = sh.getLastRow(), width = Math.min(sh.getMaxColumns(), PB + 8);
+        if (last < 2) return;
+        const v = sh.getRange(2, 1, last - 1, width).getValues();
+        cols.forEach(function (c) {
+          if (c >= width) return;
+          let changed = false;
+          const col = v.map(function (r, i) {
+            const x = r[c];
+            if (typeof x !== "string" || !to.hasOwnProperty(x.trim())) return [x];
+            const t = to[x.trim()];
+            changed = true; total++;
+            out.push("  " + label + " / " + name + " " + (i + 2) + "行目: 「" + x + "」→「" + t + "」");
+            return [t];
+          });
+          if (changed && apply) sh.getRange(2, c + 1, last - 1, 1).setValues(col);
+        });
+      });
+    });
+  });
+  if (apply && total) {
+    SpreadsheetApp.flush();
+    invalidatePageCaches();
+    publishAllSoon();
+  }
+  const msg = (apply ? "名前をそろえました: " : "直す所（まだ変更していません）: ") + total + " か所\n" +
+    out.join("\n") + (apply ? "" : "\n\n問題なければ fixNameVariants() を実行してください。");
   Logger.log(msg);
   return msg;
 }
