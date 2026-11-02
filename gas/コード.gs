@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v117";
+const SITE_VER = "site v118";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -4451,6 +4451,42 @@ function seasonAudit_(AUDIT_SEASON) {
         }
       });
       out.push("7. 結果が空の行: " + (empty.length ? empty.length + " 行 → " + empty.slice(0, 15).join(" / ") + (empty.length > 15 ? " ほか" : "") : "なし"));
+
+      // 8. 登坂が違う投手について、投げた試合ごとに「投手成績の欄（投手名の列）に名前があるか」を出す。
+      //    成績シートの登坂がこの欄で数えているなら、名前の無い試合のぶん少なくなる
+      const bad = pdiff.map(function (x) { return x.split(" ")[0]; });
+      if (bad.length) {
+        const PB = L.pblockName;
+        const full = sh.getRange(2, 1, raw.length, Math.min(sh.getMaxColumns(), PB + 8)).getValues();
+        const groups = [];
+        let cur = null, prev = null;
+        full.forEach(function (r, i) {
+          if (String(r[L.batter] || "") === "") return;
+          const d = ymd(r[0]), inn = Number(r[L.inning]) || 0;
+          if (!prev || d !== prev.d || inn < prev.inn) { cur = { d: d, start: i, end: i, rows: [] }; groups.push(cur); }
+          cur.rows.push(i); cur.end = i;
+          prev = { d: d, inn: inn };
+        });
+        const lines = [];
+        bad.forEach(function (p) {
+          groups.forEach(function (g, gi) {
+            const mine = g.rows.filter(function (i) { return normName(full[i][L.pitcher]) === p; });
+            if (!mine.length) return;
+            const stop = gi + 1 < groups.length ? groups[gi + 1].start : full.length;
+            let listed = false;
+            for (let i = g.start; i < stop; i++) if (normName(full[i][PB]) === p) listed = true;
+            const outs = mine.reduce(function (a, i) {
+              const r = full[i];
+              return a + outsAddedOf({ tb: String(r[L.tb]).trim(), inning: Number(r[L.inning]) || 0, outs: Number(r[L.outs]) || 0,
+                nTb: String(r[L.nTb]).trim(), nInning: Number(r[L.nInning]) || 0, nOuts: Number(r[L.nOuts]) || 0 });
+            }, 0);
+            lines.push("  " + p + " " + g.d + "（全試合経過 " + (g.start + 2) + "行目〜・対戦" + mine.length + "人・" + ipStr(outs) + "回）" +
+              (listed ? "" : " ← 投手成績の欄に名前なし"));
+          });
+        });
+        out.push("8. 登坂が違う投手の登板試合:");
+        out.push.apply(out, lines);
+      }
     }
     return out.join("\n");
   });
