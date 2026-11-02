@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v122";
+const SITE_VER = "site v123";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -7233,7 +7233,7 @@ function tsFit_(raw, part, len) {
 
 function autoTsLinks_(apply) {
   const videos = ytTsVideos_();
-  const out = [], none = [];
+  const out = [], none = [], noRaw = [];
   let total = 0;
   const fmt = function (s) {
     const a = Math.abs(s);
@@ -7249,18 +7249,20 @@ function autoTsLinks_(apply) {
         const name = tsKeyOf(r[0]);
         const day = name.replace(/-/g, "").slice(0, 8);
         const raw = tsPaTimes_(String(r[1] || ""));
-        if (!/^\d{8}$/.test(day) || !Object.keys(raw["表"]).length) return;
+        if (!/^\d{8}$/.test(day)) return;
+        if (!Object.keys(raw["表"]).length) { noRaw.push("  " + s.label + " / " + name); return; }
         let best = null;
         videos.forEach(function (vd) {
-          if (vd.day !== day) return;
+          // 動画名の日付が試合の日付とずれていることがある（夜の試合を翌日の日付で記録した等）ので、
+          // 日付が違う動画も打席の時刻で比べる。その場合は合う打席を多めに求める
+          const sameDay = vd.day === day ? 1 : 0;
           vd.parts.forEach(function (p) {
             const m = tsFit_(raw, p, vd.len);
-            if (!m || m.fit < 0.6) return;
+            if (!m || m.fit < 0.6 || (!sameDay && (m.fit < 0.8 || m.pairs < 10))) return;
             const plain = vd.title === day ? 1 : 0;
-            if (!best || m.cover > best.m.cover + 0.05 ||
-                (Math.abs(m.cover - best.m.cover) <= 0.05 && (plain > best.plain || (plain === best.plain && m.fit > best.m.fit)))) {
-              best = { vd: vd, p: p, m: m, plain: plain };
-            }
+            const c = !best ? 1 : m.cover > best.m.cover + 0.05 ? 1 : m.cover < best.m.cover - 0.05 ? -1 :
+              sameDay !== best.sameDay ? sameDay - best.sameDay : plain !== best.plain ? plain - best.plain : m.fit - best.m.fit;
+            if (c > 0) best = { vd: vd, p: p, m: m, plain: plain, sameDay: sameDay };
           });
         });
         if (!best) { none.push("  " + s.label + " / " + name); return; }
@@ -7270,6 +7272,7 @@ function autoTsLinks_(apply) {
         out.push("  " + s.label + " / " + name + " → 「" + best.vd.title + "」" + (best.p.tag ? best.p.tag : "") +
           " ずれ " + fmt(best.m.off) + "（合った打席 " + Math.round(best.m.fit * 100) + "%）" +
           (best.m.cover < 0.9 ? " ※ 動画に入っているのは試合の" + Math.round(best.m.cover * 100) + "%" : "") +
+          (best.sameDay ? "" : " ※ 動画名の日付が試合と違います") +
           (same ? " ／ 登録済み" : (nowUrl ? " ／ 今の登録: " + nowUrl + " " + fmt(nowOff) : "")));
         if (same) return;
         total++;
@@ -7288,7 +7291,8 @@ function autoTsLinks_(apply) {
     publishAllSoon();
   }
   const msg = (apply ? "動画とずれを登録しました: " : "登録する試合（まだ変更していません）: ") + total + " 試合\n" + out.join("\n") +
-    (none.length ? "\n\n動画が見つからなかった試合（概要欄にタイムスタンプが無い・動画名の日付が違うなど）: " + none.length + " 試合\n" + none.join("\n") : "") +
+    (none.length ? "\n\n動画が見つからなかった試合（概要欄にタイムスタンプが無いなど）: " + none.length + " 試合\n" + none.join("\n") : "") +
+    (noRaw.length ? "\n\nタイムスタンプのシートに打席の時刻が無い試合: " + noRaw.length + " 試合\n" + noRaw.join("\n") : "") +
     (apply ? "" : "\n\n問題なければ autoTsLinks() を実行してください。");
   Logger.log(msg);
   return msg;
