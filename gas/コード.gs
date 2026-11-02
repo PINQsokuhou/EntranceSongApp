@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v118";
+const SITE_VER = "site v119";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -4412,13 +4412,17 @@ function seasonAudit_(AUDIT_SEASON) {
     // 5・6 は全試合経過をそのまま（名前をそろえずに）読んで、行番号つきで出す
     const book = ss(), L = layoutOf(book), sh = book.getSheetByName(ALL_GAMES);
     if (sh && sh.getLastRow() >= 2) {
-      const raw = sh.getRange(2, 1, sh.getLastRow() - 1, Math.max(L.batter, L.pitcher, L.inning) + 1).getValues();
+      const raw = sh.getRange(2, 1, sh.getLastRow() - 1, Math.min(sh.getMaxColumns(), L.pblockName + 8)).getValues();
+      // 名前を見る列: 打者・投手と、投手成績の欄（出場者・投手名・先発・勝・敗・ホールド・セーブ）
+      const nameCols = [L.batter, L.pitcher, L.pblockName - 1, L.pblockName, L.pblockName + 3, L.pblockName + 4,
+        L.pblockName + 5, L.pblockName + 6, L.pblockName + 7].filter(function (c) { return c < raw[0].length; });
       // 5. 表記ゆれ: 同じ選手が違う書き方で入っている（成績シートの数式は書き方の文字で数えるので、少ない方が数えられない）
       const sp = {};
       raw.forEach(function (r, i) {
-        [L.batter, L.pitcher].forEach(function (c) {
+        nameCols.forEach(function (c) {
+          if (typeof r[c] !== "string") return;
           // 前後の空白も別の書き方として数える（数式は「布目 」と「布目」を別の名前として扱う）
-          const t = String(r[c] == null ? "" : r[c]).replace(/\s/g, function (w) { return w === " " ? "␣" : "□"; });
+          const t =String(r[c] == null ? "" : r[c]).replace(/\s/g, function (w) { return w === " " ? "␣" : "□"; });
           if (!t.replace(/[␣□]/g, "")) return;
           const n = normName(String(r[c]));
           sp[n] = sp[n] || {};
@@ -4665,6 +4669,81 @@ function nameSpaceFix_(apply) {
   }
   const msg = (apply ? "空白を取りました: " : "直す所（まだ変更していません）: ") + total + " か所（␣=半角空白 □=全角空白など）\n" +
     out.join("\n") + (apply ? "" : "\n\n問題なければ fixNameSpaces() を実行してください。");
+  Logger.log(msg);
+  return msg;
+}
+
+// ---- 投げたのに投手成績の欄に名前が無い投手を足す（一度きりの修復用）----
+// 成績シートの登坂・失点などは、各試合の右側の投手成績の欄（投手名の列）で数えている。
+// 2026春夏の 9/17 の試合で、谷遼・野平が投げているのに欄に名前が無く、登坂が1つずつ少なかった。
+// 試合の中の空いている行に [投手名, 失点, 自責点] を足す。失点・自責点は、その投手が投げている間に
+// 入った点（前の投手が出した走者の生還も含む目安）なので、下見で確かめて必要なら手で直す。
+// 対象は AUDIT_SEASONS のシーズンの、全試合経過・経過シート・日付シート。
+// 使い方: まず addMissingPitchersDryRun() で確認 → 問題なければ addMissingPitchers() を実行。
+function addMissingPitchersDryRun() { return missingPitcherFix_(false); }
+function addMissingPitchers() { return missingPitcherFix_(true); }
+
+function missingPitcherFix_(apply) {
+  const out = [];
+  let total = 0;
+  AUDIT_SEASONS.forEach(function (label) {
+    const s = seasonList().filter(function (x) { return x.label === label && !x.statsSheet; })[0];
+    if (!s) { out.push("■ " + label + ": シーズン一覧に見つかりません"); return; }
+    withSeason_(s.id, function () {
+      const book = ss(), L = layoutOf(book), PB = L.pblockName;
+      book.getSheets().forEach(function (sh) {
+        const name = sh.getName();
+        if (!/^\d{4}-?\d{2}-?\d{2}/.test(name) && name.indexOf("経過") < 0) return;
+        const last = sh.getLastRow();
+        if (last < 2 || sh.getMaxColumns() < PB + 3) return;
+        const v = sh.getRange(2, 1, last - 1, PB + 3).getValues();
+        const groups = [];
+        let cur = null, prev = null;
+        v.forEach(function (r, i) {
+          if (String(r[L.batter] || "") === "") return;
+          const d = ymd(r[0]), inn = Number(r[L.inning]) || 0;
+          if (!prev || d !== prev.d || inn < prev.inn) { cur = { d: d, start: i, rows: [] }; groups.push(cur); }
+          cur.rows.push(i);
+          prev = { d: d, inn: inn };
+        });
+        groups.forEach(function (g, gi) {
+          const stop = gi + 1 < groups.length ? groups[gi + 1].start : v.length;
+          const listed = {};
+          for (let i = g.start; i < stop; i++) { const n = normName(v[i][PB]); if (n) listed[n] = 1; }
+          const pitched = [], runs = {};
+          g.rows.forEach(function (i) {
+            const raw = String(v[i][L.pitcher] || "").trim();
+            if (!raw) return;
+            const n = normName(raw);
+            if (!runs[n]) { runs[n] = { raw: raw, r: 0 }; pitched.push(n); }
+            runs[n].r += Number(v[i][L.runs]) || 0;
+          });
+          pitched.filter(function (n) { return !listed[n]; }).forEach(function (n) {
+            // 試合の範囲で、投手名・失点・自責点が空いている最初の行
+            let at = -1;
+            for (let i = g.start; i < stop; i++) {
+              if (String(v[i][PB]) === "" && String(v[i][PB + 1]) === "" && String(v[i][PB + 2]) === "") { at = i; break; }
+            }
+            const r = runs[n].r;
+            out.push("  " + label + " / " + name + " " + g.d + "（" + (g.start + 2) + "行目〜）: 「" + runs[n].raw + "」失点" + r + " 自責" + r +
+              (at < 0 ? " ※ 空いている行が無いので足せません" : " を " + (at + 2) + "行目に足します"));
+            if (at < 0) return;
+            total++;
+            v[at][PB] = runs[n].raw; v[at][PB + 1] = r; v[at][PB + 2] = r;   // 同じ試合で続けて足すときに空き行がずれるように
+            if (apply) sh.getRange(at + 2, PB + 1, 1, 3).setValues([[runs[n].raw, r, r]]);
+          });
+        });
+      });
+    });
+  });
+  if (apply && total) {
+    SpreadsheetApp.flush();
+    invalidatePageCaches();
+    publishAllSoon();
+  }
+  const msg = (apply ? "投手成績の欄に足しました: " : "足す投手（まだ変更していません）: ") + total + " か所\n" + out.join("\n") +
+    (apply ? "" : "\n\n失点・自責点は「その投手が投げている間に入った点」の目安です。違っていたら実行後に手で直してください。" +
+      "\n問題なければ addMissingPitchers() を実行してください。");
   Logger.log(msg);
   return msg;
 }
