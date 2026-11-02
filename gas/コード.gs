@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v100";
+const SITE_VER = "site v101";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -3261,7 +3261,7 @@ function commitBatched_(files, label, note) {
 // 試合を保存すると cur / その月 / career に「古くなった」印（時刻）を付ける。
 // 印は書き出し中に付け直されることがあるので、作り始めたときの時刻と同じときだけ消す
 // （書き出し中に次の試合が保存されても、その試合を取りこぼさない）。
-const PUB_VER = "8";               // ページの見た目を変えたら上げる。全ページを作り直す
+const PUB_VER = "9";               // ページの見た目を変えたら上げる。全ページを作り直す
 const PUB_DONE_KEY = "pubDone";    // { ジョブ名: PUB_VER }
 const PUB_DIRTY_KEY = "pubDirty";  // { ジョブ名: 印を付けた時刻 }
 const PUB_CUR_KEY = "pubCur";      // 途中まで進んだジョブ "名前#件数#印の時刻"
@@ -4842,7 +4842,7 @@ function isRisp_(bases) {
 function newRecBat_() {
   return { g: 0, pa: 0, ab: 0, h: 0, s1: 0, d2: 0, d3: 0, hr: 0, tb: 0, rbi: 0, runs: 0,
     sbunt: 0, sh: 0, b3f: 0, sq: 0, sqf: 0, sf: 0, kl: 0, ks: 0, so: 0, bb: 0, hbp: 0,
-    roe: 0, gdp: 0, np: 0, rab: 0, rh: 0, bt: 0, go: 0, ld: 0, fb: 0, dn: 0, dir: [0, 0, 0, 0, 0, 0, 0] };
+    roe: 0, gdp: 0, np: 0, rpa: 0, rab: 0, rh: 0, bt: 0, go: 0, ld: 0, fb: 0, dn: 0, dir: [0, 0, 0, 0, 0, 0, 0] };
 }
 function newRecPit_() {
   return { app: 0, gs: 0, w: 0, l: 0, hld: 0, sv: 0, outs: 0, bf: 0, runs: 0, er: 0,
@@ -4868,6 +4868,7 @@ function recStatsFrom_(rows, blockSheet, book) {
     if (r.batter) {
       const b = B(r.batter);
       b.pa++;
+      if (risp) b.rpa++;   // 得点圏打席
       const ab = isCareerAtBat_(res);
       if (ab) { b.ab++; if (risp) b.rab++; }
       if (tb >= 1) { b.h++; if (risp) b.rh++; }
@@ -5540,6 +5541,18 @@ function renderStats(type, statId, period) {
     defs.filter(d => d.label === fallback)[0] || defs[0];
   const subLabel = isBat ? "打席" : "投球回";
 
+  // 得点圏打率の右の列は、打席ではなく得点圏打席（走者が二塁・三塁にいる場面の打席）。
+  // 成績シートには無いので試合記録から数える（全シーズン通算は careerData の rpa）。試合記録の無い年度は打席のまま
+  const RISP_LABEL = "得点圏打率", RISP_SUB = "得点圏打席";
+  let rispPa = null;
+  if (isBat && !isCareer && !rp.statsOnly && defs.some(d => d.label === RISP_LABEL)) {
+    rispPa = {};
+    rowsOf(rp.sheet).forEach(r => { if (r.batter && isRisp_(r.bases)) rispPa[r.batter] = (rispPa[r.batter] || 0) + 1; });
+  }
+  const rispSubOf = (def, nm, x) => def.label !== RISP_LABEL ? null
+    : isCareer ? (x && x.rpa !== undefined ? String(x.rpa) : null)
+    : rispPa ? String(rispPa[nm] || 0) : null;
+
   // 成績シートが無い期間の集計は、種目に関係なく1回だけ行う
   let data = null, lg = null;
   if (!useSheet) {
@@ -5584,9 +5597,10 @@ function renderStats(type, statId, period) {
         if (def.rate && qc >= 0 && q === null) continue;
         const v = statNum(src.values[r][def.col]);
         if (v === null) continue;
+        const rs = rispSubOf(def, nm, null);
         list.push({ name: nm, v: v,
           disp: sheetDisp(src, r, def.col, def.label),
-          sub: q === null ? "-" : sheetDisp(src, r, qc, subLabel) });
+          sub: rs !== null ? rs : (q === null ? "-" : sheetDisp(src, r, qc, subLabel)) });
       }
     } else {
       Object.keys(data).forEach(nm => {
@@ -5602,8 +5616,9 @@ function renderStats(type, statId, period) {
         if (isCareer && !q) return;   // その集計範囲で打席・投球回が無い人は載せない
         const v = isCareer ? def.val(x, lg) : def.val(x);
         if (v === null || v === undefined || isNaN(v) && v !== Infinity) return;
+        const rs = rispSubOf(def, nm, x);
         list.push({ name: nm, v: v, disp: def.fmt ? def.fmt(v) : String(v),
-          sub: isBat ? String(q) : ipStr(q) });
+          sub: rs !== null ? rs : (isBat ? String(q) : ipStr(q)) });
       });
     }
     list.sort((a, b) => def.asc ? a.v - b.v : b.v - a.v);
@@ -5617,8 +5632,13 @@ function renderStats(type, statId, period) {
     });
     return rows;
   }
-  const all = defs.map(d => ({ id: d.id, label: d.label, rate: !!d.rate, rows: rankRows(d),
-    note: (isCareer && d.src === "rec") ? CAREER_REC_NOTE : "" }));
+  const all = defs.map(d => {
+    const o = { id: d.id, label: d.label, rate: !!d.rate, rows: rankRows(d),
+      note: (isCareer && d.src === "rec") ? CAREER_REC_NOTE : "" };
+    // 右の列の見出しをこの種目だけ変える（得点圏打率 → 得点圏打席）
+    if (d.label === RISP_LABEL && (isCareer || rispPa)) o.sub = RISP_SUB;
+    return o;
+  });
   const i0 = Math.max(0, defs.indexOf(def0));
 
   function sel(name, opts, current, extra) {
@@ -5648,7 +5668,7 @@ function renderStats(type, statId, period) {
   // 最初の表はサーバーで描いておく（スクリプトが動かなくても見える）
   const first = all[i0];
   let t = '<div class="tbl" id="ppRank"><table class="st"><tr><th style="width:3em">順位</th>' +
-    '<th class="name">選手名</th><th>' + esc(first.label) + '</th><th>' + esc(subLabel) + '</th></tr>';
+    '<th class="name">選手名</th><th>' + esc(first.label) + '</th><th>' + esc(first.sub || subLabel) + '</th></tr>';
   first.rows.forEach(r => {
     const pl = players[r[0]];
     t += '<tr><td>' + r[1] + '</td><td class="name"><a target="_top" href="' + pl[0] + '">' + esc(pl[1]) + '</a></td>' +
@@ -5684,7 +5704,7 @@ function statsSwitch_(P, S, SUB, CN, TY) {
   function draw(i) {
     var d = S[i];
     var h = '<table class="st"><tr><th style="width:3em">順位</th><th class="name">選手名</th><th>' +
-      e(d.label) + '</th><th>' + e(SUB) + '</th></tr>';
+      e(d.label) + '</th><th>' + e(d.sub || SUB) + '</th></tr>';
     for (var k = 0; k < d.rows.length; k++) {
       var r = d.rows[k], p = P[r[0]];
       h += '<tr><td>' + r[1] + '</td><td class="name"><a target="_top" href="' + e(p[0]) + '">' + e(p[1]) +
