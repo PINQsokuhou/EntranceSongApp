@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v113";
+const SITE_VER = "site v114";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -4417,9 +4417,10 @@ function seasonAudit_(AUDIT_SEASON) {
       const sp = {};
       raw.forEach(function (r, i) {
         [L.batter, L.pitcher].forEach(function (c) {
-          const t = String(r[c] || "").trim();
-          if (!t) return;
-          const n = normName(t);
+          // 前後の空白も別の書き方として数える（数式は「布目 」と「布目」を別の名前として扱う）
+          const t = String(r[c] == null ? "" : r[c]).replace(/\s/g, function (w) { return w === " " ? "␣" : "□"; });
+          if (!t.replace(/[␣□]/g, "")) return;
+          const n = normName(String(r[c]));
           sp[n] = sp[n] || {};
           sp[n][t] = sp[n][t] || { k: 0, rows: [] };
           sp[n][t].k++;
@@ -4429,7 +4430,7 @@ function seasonAudit_(AUDIT_SEASON) {
       const yure = Object.keys(sp).filter(function (n) { return Object.keys(sp[n]).length > 1; }).map(function (n) {
         return n + "（" + Object.keys(sp[n]).map(function (t) { return "「" + t + "」" + sp[n][t].k + (sp[n][t].k <= 3 ? "：" + sp[n][t].rows.join("・") + "行目" : ""); }).join(" / ") + "）";
       });
-      out.push("5. 全試合経過の表記ゆれ: " + (yure.length ? yure.join(", ") : "なし"));
+      out.push("5. 全試合経過の表記ゆれ（␣=半角空白 □=全角空白など）: " + (yure.length ? yure.join(", ") : "なし"));
       // 6. 前後と日付が違う行（試合の途中に別の日付の行が紛れている）と、同じ日付の中で回が戻る行
       const day = function (v) { return ymd(v); };
       const odd = [];
@@ -4441,6 +4442,15 @@ function seasonAudit_(AUDIT_SEASON) {
         }
       }
       out.push("6. 前後と日付が違う行: " + (odd.length ? odd.join(" / ") : "なし"));
+      // 7. 打者がいるのに結果が空の行（成績シートの数式によっては打席に数えない）
+      const res2 = sh.getRange(2, L.result + 1, raw.length, 1).getValues();
+      const empty = [];
+      raw.forEach(function (r, i) {
+        if (String(r[L.batter] || "").trim() && !String(res2[i][0] == null ? "" : res2[i][0]).trim()) {
+          empty.push((i + 2) + "行目 " + ymd(r[0]) + " " + r[L.inning] + "回 打者 " + r[L.batter]);
+        }
+      });
+      out.push("7. 結果が空の行: " + (empty.length ? empty.length + " 行 → " + empty.slice(0, 15).join(" / ") + (empty.length > 15 ? " ほか" : "") : "なし"));
     }
     return out.join("\n");
   });
