@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v120";
+const SITE_VER = "site v121";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -4745,6 +4745,22 @@ function missingPitcherFix_(apply) {
     if (!s) { out.push("■ " + label + ": シーズン一覧に見つかりません"); return; }
     withSeason_(s.id, function () {
       const book = ss(), L = layoutOf(book), PB = L.pblockName;
+      // 足す名前は、全試合経過の投手成績の欄で一番多い書き方に合わせる（「谷」ではなく「谷遼」など、成績シートが数える名前）
+      const spell = {};
+      const allSh = book.getSheetByName(ALL_GAMES);
+      if (allSh && allSh.getLastRow() >= 2 && allSh.getMaxColumns() > PB) {
+        allSh.getRange(2, PB + 1, allSh.getLastRow() - 1, 1).getValues().forEach(function (r) {
+          const t = String(r[0] || "").trim();
+          if (!t) return;
+          const n = normName(t), m = spell[n] || (spell[n] = {});
+          m[t] = (m[t] || 0) + 1;
+        });
+      }
+      const spellOf = function (n, raw) {
+        const m = spell[n];
+        if (!m) return raw;
+        return Object.keys(m).sort(function (a, b) { return m[b] - m[a]; })[0];
+      };
       book.getSheets().forEach(function (sh) {
         const name = sh.getName();
         if (!/^\d{4}-?\d{2}-?\d{2}/.test(name) && name.indexOf("経過") < 0) return;
@@ -4769,7 +4785,7 @@ function missingPitcherFix_(apply) {
             const raw = String(v[i][L.pitcher] || "").trim();
             if (!raw) return;
             const n = normName(raw);
-            if (!runs[n]) { runs[n] = { raw: raw, r: 0 }; pitched.push(n); }
+            if (!runs[n]) { runs[n] = { raw: spellOf(n, raw), r: 0 }; pitched.push(n); }
             runs[n].r += Number(v[i][L.runs]) || 0;
           });
           pitched.filter(function (n) { return !listed[n]; }).forEach(function (n) {
