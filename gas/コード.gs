@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v115";
+const SITE_VER = "site v116";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -4575,6 +4575,60 @@ function strayDateFix_(apply) {
   }
   const msg = (apply ? "日付を直しました: " : "直す行（まだ変更していません）: ") + total + " 行\n" + out.join("\n") +
     (apply ? "" : "\n\n問題なければ fixStrayDates() を実行してください。");
+  Logger.log(msg);
+  return msg;
+}
+
+// ---- 名前の前後の空白を取る（一度きりの修復用）----
+// 2024秋冬の全試合経過 66行目は打者が「□布目」（前に全角空白など）になっていて、
+// 成績シートの数式が「布目」と別の名前として数えず、打席が1つ少なかった。
+// 打者・投手の欄と、右側の投手成績の欄（出場者・投手名・先発・勝・敗・ホールド・セーブ）の、
+// 前後の空白（全角空白・改行なども）を取る。対象は AUDIT_SEASONS のシーズンの、全試合経過・経過シート・日付シート。
+// 使い方: まず fixNameSpacesDryRun() で直す所を確認 → 問題なければ fixNameSpaces() を実行。
+function fixNameSpacesDryRun() { return nameSpaceFix_(false); }
+function fixNameSpaces() { return nameSpaceFix_(true); }
+
+function nameSpaceFix_(apply) {
+  const out = [];
+  let total = 0;
+  const show = function (t) { return String(t).replace(/\s/g, function (w) { return w === " " ? "␣" : "□"; }); };
+  AUDIT_SEASONS.forEach(function (label) {
+    const s = seasonList().filter(function (x) { return x.label === label && !x.statsSheet; })[0];
+    if (!s) { out.push("■ " + label + ": シーズン一覧に見つかりません"); return; }
+    withSeason_(s.id, function () {
+      const book = ss(), L = layoutOf(book), PB = L.pblockName;
+      // 名前が入る列（0始まり）: 打者・投手と、投手成績の欄の 出場者〜セーブ（勝敗の数は除く）
+      const cols = [L.batter, L.pitcher, PB - 1, PB, PB + 3, PB + 4, PB + 5, PB + 6, PB + 7];
+      book.getSheets().forEach(function (sh) {
+        const name = sh.getName();
+        if (!/^\d{4}-?\d{2}-?\d{2}/.test(name) && name.indexOf("経過") < 0) return;
+        const last = sh.getLastRow(), width = Math.min(sh.getMaxColumns(), PB + 8);
+        if (last < 2) return;
+        const v = sh.getRange(2, 1, last - 1, width).getValues();
+        cols.forEach(function (c) {
+          if (c >= width) return;
+          let changed = false;
+          const col = v.map(function (r, i) {
+            const x = r[c];
+            if (typeof x !== "string") return [x];
+            const t = x.replace(/^\s+|\s+$/g, "");
+            if (t === x || !t) return [x];
+            changed = true; total++;
+            out.push("  " + label + " / " + name + " " + (i + 2) + "行目: 「" + show(x) + "」→「" + t + "」");
+            return [t];
+          });
+          if (changed && apply) sh.getRange(2, c + 1, last - 1, 1).setValues(col);
+        });
+      });
+    });
+  });
+  if (apply && total) {
+    SpreadsheetApp.flush();
+    invalidatePageCaches();
+    publishAllSoon();
+  }
+  const msg = (apply ? "空白を取りました: " : "直す所（まだ変更していません）: ") + total + " か所（␣=半角空白 □=全角空白など）\n" +
+    out.join("\n") + (apply ? "" : "\n\n問題なければ fixNameSpaces() を実行してください。");
   Logger.log(msg);
   return msg;
 }
