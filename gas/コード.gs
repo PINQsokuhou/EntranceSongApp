@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v112";
+const SITE_VER = "site v113";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -4295,7 +4295,7 @@ function addPlayerRows_(apply) {
  * を出す。成績シートと試合ページの打席数が合わない原因を探すために使う。
  */
 // 調べるシーズン（シーズン一覧の名前。いくつでも並べられる）
-const AUDIT_SEASONS = ["2024春夏", "2024秋冬"];
+const AUDIT_SEASONS = ["2024秋冬"];
 function seasonAuditReport() {
   const msg = AUDIT_SEASONS.map(seasonAudit_).join("\n\n");
   Logger.log(msg);
@@ -4408,6 +4408,40 @@ function seasonAudit_(AUDIT_SEASON) {
     const pMissing = Object.keys(app).filter(function (n) { return !pIn[n]; });
     out.push("4. 投手の登坂（成績シート/全試合経過）: " + (src && src.split >= 0 ? (pdiff.length ? pdiff.length + " 人違う → " + pdiff.join(", ") : "全員一致") : "投手の欄が見つかりません") +
       " ／ 投手の行が無い: " + (pMissing.length ? pMissing.map(function (n) { return n + "（" + app[n] + "登坂）"; }).join(", ") : "なし"));
+
+    // 5・6 は全試合経過をそのまま（名前をそろえずに）読んで、行番号つきで出す
+    const book = ss(), L = layoutOf(book), sh = book.getSheetByName(ALL_GAMES);
+    if (sh && sh.getLastRow() >= 2) {
+      const raw = sh.getRange(2, 1, sh.getLastRow() - 1, Math.max(L.batter, L.pitcher, L.inning) + 1).getValues();
+      // 5. 表記ゆれ: 同じ選手が違う書き方で入っている（成績シートの数式は書き方の文字で数えるので、少ない方が数えられない）
+      const sp = {};
+      raw.forEach(function (r, i) {
+        [L.batter, L.pitcher].forEach(function (c) {
+          const t = String(r[c] || "").trim();
+          if (!t) return;
+          const n = normName(t);
+          sp[n] = sp[n] || {};
+          sp[n][t] = sp[n][t] || { k: 0, rows: [] };
+          sp[n][t].k++;
+          if (sp[n][t].rows.length < 3) sp[n][t].rows.push(i + 2);
+        });
+      });
+      const yure = Object.keys(sp).filter(function (n) { return Object.keys(sp[n]).length > 1; }).map(function (n) {
+        return n + "（" + Object.keys(sp[n]).map(function (t) { return "「" + t + "」" + sp[n][t].k + (sp[n][t].k <= 3 ? "：" + sp[n][t].rows.join("・") + "行目" : ""); }).join(" / ") + "）";
+      });
+      out.push("5. 全試合経過の表記ゆれ: " + (yure.length ? yure.join(", ") : "なし"));
+      // 6. 前後と日付が違う行（試合の途中に別の日付の行が紛れている）と、同じ日付の中で回が戻る行
+      const day = function (v) { return ymd(v); };
+      const odd = [];
+      for (let i = 0; i < raw.length; i++) {
+        if (String(raw[i][L.batter] || "") === "") continue;
+        const d = day(raw[i][0]), dp = i > 0 ? day(raw[i - 1][0]) : null, dn = i + 1 < raw.length ? day(raw[i + 1][0]) : null;
+        if (dp && dn && d !== dp && d !== dn && dp === dn) {
+          odd.push((i + 2) + "行目 日付 " + d + "（前後は " + dp + "） " + raw[i][L.inning] + "回 打者 " + raw[i][L.batter]);
+        }
+      }
+      out.push("6. 前後と日付が違う行: " + (odd.length ? odd.join(" / ") : "なし"));
+    }
     return out.join("\n");
   });
 }
