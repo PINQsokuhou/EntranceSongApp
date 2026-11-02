@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v105";
+const SITE_VER = "site v106";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -3261,7 +3261,7 @@ function commitBatched_(files, label, note) {
 // 試合を保存すると cur / その月 / career に「古くなった」印（時刻）を付ける。
 // 印は書き出し中に付け直されることがあるので、作り始めたときの時刻と同じときだけ消す
 // （書き出し中に次の試合が保存されても、その試合を取りこぼさない）。
-const PUB_VER = "11";               // ページの見た目を変えたら上げる。全ページを作り直す
+const PUB_VER = "12";               // ページの見た目を変えたら上げる。全ページを作り直す
 const PUB_DONE_KEY = "pubDone";    // { ジョブ名: PUB_VER }
 const PUB_DIRTY_KEY = "pubDirty";  // { ジョブ名: 印を付けた時刻 }
 const PUB_CUR_KEY = "pubCur";      // 途中まで進んだジョブ "名前#件数#印の時刻"
@@ -4718,6 +4718,17 @@ function sheetRankDefs(src, isBat) {
   return defs;
 }
 
+// 出場したかの判定に使う列（打者=出場、投手=登坂。無ければ打席／投球回）。-1 なら判定しない
+function appearColOf_(src, isBat) {
+  const from = isBat ? 1 : src.split + 1;
+  const to = isBat ? src.batTo : src.headers.length - 1;
+  const want = isBat ? ["出場"] : ["登坂", "登板"];
+  for (let c = from; c <= to; c++) {
+    if (want.indexOf(String(src.headers[c] || "").trim()) >= 0) return c;
+  }
+  return qualColOf(src, isBat);
+}
+
 // 規定打席／規定投球回の判定に使う列
 function qualColOf(src, isBat) {
   const from = isBat ? 1 : src.split + 1;
@@ -5684,11 +5695,14 @@ function renderStats(type, statId, period) {
     if (useSheet) {
       const nameCol = isBat ? 0 : src.split;
       const qc = qualColOf(src, isBat);
+      const ac = appearColOf_(src, isBat);
       for (let r = 1; r < src.values.length; r++) {
         const nm = normName(src.values[r][nameCol]);
         if (!nm) continue;
         // 成績シートの「合計」「平均」の行は選手ではないので順位に入れない（合計が1位に並んでいた）
         if (/^(平均|合計|計|total)$/i.test(nm)) continue;
+        // その期間に1回も出ていない選手は載せない（成績シートには全員の行があり、0が並んでいた）
+        if (ac >= 0 && !(statNum(src.values[r][ac]) > 0)) continue;
         const q = qc >= 0 ? statNum(src.values[r][qc]) : null;
         // 各シーズンは規定で絞らない。打席・投球回が空の人だけ外す
         if (def.rate && qc >= 0 && q === null) continue;
