@@ -71,7 +71,7 @@ function newSeasonUrl() {
 }
 
 // サイトの表示バージョン（デプロイ反映確認用。ページ最下部に表示される）
-const SITE_VER = "site v111";
+const SITE_VER = "site v112";
 
 // サイトパスワード（空ならパスワードなし）
 const SITE_PASSWORD = "pingpong";
@@ -4194,7 +4194,9 @@ function holdFix_(apply) {
 // 使い方: まず addPlayerRowsDryRun() で入れる場所を確認 → 問題なければ addPlayerRows() を実行。
 // 入れる選手とシーズン（[名簿の正式名, シーズン一覧の名前]。今のシーズンは「今シーズン」）。
 // 追加済み: 藤田拓（2026春夏・今シーズン）、中澤（2025秋冬）
-const ADD_PLAYERS = [["鈴木", "2025春夏"], ["小林", "2025春夏"]];
+// 追加済み（予定）: 鈴木・小林（2025春夏）
+const ADD_PLAYERS = [["中村", "2024春夏"], ["井上", "2024春夏"], ["小林", "2024春夏"], ["布目", "2024春夏"],
+  ["廣川", "2024春夏"], ["矢島", "2024春夏"], ["谷彬", "2024春夏"]];
 function addPlayerRowsDryRun() { return addPlayerRows_(false); }
 function addPlayerRows() { return addPlayerRows_(true); }
 
@@ -4292,8 +4294,14 @@ function addPlayerRows_(apply) {
  *  3. 全試合経過に出てくるのに成績シートに行が無い選手
  * を出す。成績シートと試合ページの打席数が合わない原因を探すために使う。
  */
-const AUDIT_SEASON = "2025春夏";
+// 調べるシーズン（シーズン一覧の名前。いくつでも並べられる）
+const AUDIT_SEASONS = ["2024春夏", "2024秋冬"];
 function seasonAuditReport() {
+  const msg = AUDIT_SEASONS.map(seasonAudit_).join("\n\n");
+  Logger.log(msg);
+  return msg;
+}
+function seasonAudit_(AUDIT_SEASON) {
   const s = seasonList().filter(function (x) { return x.label === AUDIT_SEASON && !x.statsSheet; })[0];
   if (!s) return "シーズン一覧に「" + AUDIT_SEASON + "」がありません（" + playableSeasons().map(function (x) { return x.label; }).join("・") + "）";
   return withSeason_(s.id, function () {
@@ -4379,9 +4387,28 @@ function seasonAuditReport() {
     // 3. 成績シートに行が無い選手
     const missing = Object.keys(pa).filter(function (n) { return !inSheet[n]; });
     out.push("3. 成績シートに行が無い選手: " + (missing.length ? missing.map(function (n) { return n + "（" + pa[n] + "打席）"; }).join(", ") : "なし"));
-    const msg = out.join("\n");
-    Logger.log(msg);
-    return msg;
+
+    // 4. 投手: 全試合経過から数えた登坂（登板した試合数）と、成績シートの登坂・投手の行
+    const app = {};
+    games.forEach(function (g) {
+      const seen = {};
+      g.rows.forEach(function (r) { if (r.pitcher && !seen[r.pitcher]) { seen[r.pitcher] = 1; app[r.pitcher] = (app[r.pitcher] || 0) + 1; } });
+    });
+    const pdiff = [], pIn = {};
+    if (src && src.split >= 0) {
+      const ac = appearColOf_(src, false);
+      for (let r = 1; r < src.values.length; r++) {
+        const nm = normName(src.values[r][src.split]);
+        if (!nm || /^(平均|合計|計|total)$/i.test(nm)) continue;
+        pIn[nm] = 1;
+        const sv = ac >= 0 ? (statNum(src.values[r][ac]) || 0) : null;
+        if (sv !== null && sv !== (app[nm] || 0)) pdiff.push(nm + " シート" + sv + "/経過" + (app[nm] || 0));
+      }
+    }
+    const pMissing = Object.keys(app).filter(function (n) { return !pIn[n]; });
+    out.push("4. 投手の登坂（成績シート/全試合経過）: " + (src && src.split >= 0 ? (pdiff.length ? pdiff.length + " 人違う → " + pdiff.join(", ") : "全員一致") : "投手の欄が見つかりません") +
+      " ／ 投手の行が無い: " + (pMissing.length ? pMissing.map(function (n) { return n + "（" + app[n] + "登坂）"; }).join(", ") : "なし"));
+    return out.join("\n");
   });
 }
 
